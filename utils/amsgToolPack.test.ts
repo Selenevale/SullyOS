@@ -102,6 +102,47 @@ describe('buildToolConfig / parseToolConfig', () => {
     expect('feishuAppId' in config).toBe(false);
   });
 
+  it('云端只发送当前开启的工具凭据，关闭时不会偷偷上传以前保存的密钥和个人位置', () => {
+    const secrets = {
+      weatherEnabled: false, weatherCity: '私人城市', weatherApiKey: 'weather-secret',
+      newsEnabled: false, newsApiKey: 'news-secret', newsPlatforms: ['secret-feed'],
+      notionEnabled: false, notionApiKey: 'notion-secret', notionDatabaseId: 'private-notion-id',
+      notionNotesDatabaseId: 'private-notes-id',
+      feishuEnabled: false, feishuAppId: 'feishu-app', feishuAppSecret: 'feishu-secret',
+      feishuBaseId: 'private-base', feishuTableId: 'private-table',
+      xhsMcpConfig: {
+        enabled: false, serverUrl: 'https://xhs.example.com/api', cookie: 'xhs-cookie',
+        loggedInUserId: 'private-id', userXsecToken: 'private-xsec',
+      },
+      userHolidays: { enabled: false, birthday: 'private-birthday' },
+    } as unknown as RealtimeConfig;
+    const off = buildToolConfig(secrets);
+    const dump = JSON.stringify(off);
+    for (const value of [
+      'weather-secret', '私人城市', 'news-secret', 'secret-feed', 'notion-secret',
+      'private-notion-id', 'private-notes-id', 'feishu-app', 'feishu-secret',
+      'private-base', 'private-table', 'xhs-cookie', 'private-id', 'private-xsec',
+      'private-birthday',
+    ]) {
+      expect(dump).not.toContain(value);
+    }
+    expect(off).toMatchObject({
+      weatherEnabled: false, newsEnabled: false, notionEnabled: false, feishuEnabled: false,
+    });
+    expect(off.xhsMcpConfig).toBeUndefined();
+
+    const on = buildToolConfig({
+      ...secrets,
+      weatherEnabled: true, newsEnabled: true, notionEnabled: true, feishuEnabled: true,
+      xhsMcpConfig: { ...secrets.xhsMcpConfig!, enabled: true },
+    } as RealtimeConfig);
+    expect(on.weatherApiKey).toBe('weather-secret');
+    expect(on.newsApiKey).toBe('news-secret');
+    expect(on.notionApiKey).toBe('notion-secret');
+    expect(on.feishuAppSecret).toBe('feishu-secret');
+    expect(on.xhsMcpConfig?.cookie).toBe('xhs-cookie');
+  });
+
   it('无 realtimeConfig 时出全禁用配置（而不是抛错）', () => {
     const config = buildToolConfig(undefined);
     expect(config.newsEnabled).toBe(false);
