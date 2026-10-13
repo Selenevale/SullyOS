@@ -22,7 +22,7 @@ describe('private AMSG artifact checker', () => {
   });
 
   it('fails if the worker omits browser-origin or token enforcement', () => {
-    const missing = safeBundle.replace('AMSG_ALLOWED_ORIGIN', '').replace('INVALID_CLIENT_TOKEN', '');
+    const missing = safeBundle.replaceAll('AMSG_ALLOWED_ORIGIN', '').replace('INVALID_CLIENT_TOKEN', '');
     const result = verifyPrivateAmsgBundle(missing);
     assert.equal(result.ok, false);
     assert.match(result.errors.join(' '), /website-origin configuration/);
