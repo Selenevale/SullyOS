@@ -11,9 +11,9 @@
  *   - 麦当劳 / 瑞幸 点单 MCP                   → /mcp/mcd /mcp/luckin
  *   - Cloudflare API 中转（一键部署后端用）    → /cf-api
  *
- * 默认指向作者部署的公共实例。如果作者哪天不再维护、或你想完全自托管，
- * 把自己部署的 worker 地址填进「设置 → 网络代理 (Worker)」即可，
- * 以上全部能力会自动切到你的实例，无需改任何代码。
+ * 私有部署默认不连接真实网络代理：未配置时使用 .invalid 占位地址，
+ * 相关代理功能会失败，而不是自动将请求发给作者的公共 Worker。
+ * 请先在「设置 → 网络代理 (Worker)」填写自己部署的 Worker 地址。
  *
  * 网易云音乐（MusicContext）在播放器设置里另有一个服务地址输入框：留空 = 跟随这里，
  * 填了则只有音乐走那个地址。小红书 Lite 的 serverUrl 指向用户自己电脑上跑的服务，
@@ -25,13 +25,13 @@ export const DEFAULT_PROXY_WORKER = 'https://proxy.invalid';
 const LS_KEY = 'sully_proxy_worker_url_v1';
 const SETTINGS_FOCUS_SESSION_KEY = 'sully_settings_focus_proxy_worker_v1';
 
-// 历史公共实例域名（含保留兼容但不再默认使用的旧域名）。老用户 localStorage 里如果还存着这些，
-// 读出来时自动当成"用的是默认"，回落到 DEFAULT_PROXY_WORKER（与
-// MusicContext 的迁移逻辑一致：都指向同一个 worker，行为相同）。
+// 当前及历史作者公共代理地址都不允许作为私有部署的隐式默认值。
+// 老用户 localStorage 如仍存有这些域名，读取时退回 .invalid 安全占位地址。
+//   - proxy.friedsully.com：上游当前公共代理（本部署禁用默认回退）
 //   - sully-n.qegj567.workers.dev：最早的 workers.dev 默认域名（国内超时）
 //   - sullymeow.ccwu213.cc：旧公共自定义域名，注册已过期、DNS 无法解析（2026-07 起）
 //   - sullymeow.ccwu.cc：迁移至自有域名，旧绑定继续供旧客户端使用
-const STALE_HOSTS = new Set(['sully-n.qegj567.workers.dev', 'sullymeow.ccwu213.cc', 'sullymeow.ccwu.cc']);
+const STALE_HOSTS = new Set(['proxy.friedsully.com', 'sully-n.qegj567.workers.dev', 'sullymeow.ccwu213.cc', 'sullymeow.ccwu.cc']);
 export const isLegacyProxyWorkerUrl = (url: string): boolean => {
   try { return STALE_HOSTS.has(new URL(url).hostname.toLowerCase()); } catch { return false; }
 };
