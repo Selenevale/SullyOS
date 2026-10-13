@@ -1,5 +1,8 @@
 # 主动消息 2.0 · 从零开始的部署手册
 
+> **私有版安全提示（`hardening-v1`）**：本篇是原上游的一键部署说明，包含让浏览器收集 Cloudflare 管理 Token、自动更新、Sync fork 等步骤，**不适用于**我们的私有加固版。请改读 [私有版 Cloudflare 部署前清单](./private-cloudflare-preflight.md)。不要按本文操作创建高权限 Cloudflare Token，也不要直接部署仓库里未重新构建的旧 `worker.bundle.js`。
+
+
 「主动消息 2.0」让角色到点自己给你发消息——App 关着、手机锁屏也能收到。
 
 它需要一个只属于你的小后端（一个 Cloudflare Worker + 一个数据库）。**全程只在网页上点，不用装任何东西、不用敲命令**。
