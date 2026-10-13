@@ -9,6 +9,10 @@ const safeBundle = [
   'const badToken = "INVALID_CLIENT_TOKEN";',
   'const selfUpdateIsOff = "SELF_UPDATE_DISABLED";',
   'const upstreamBlocked = "https://blocked.invalid";',
+  'isMissing: (env) => !isValidAmsgOrigin(env.AMSG_ALLOWED_ORIGIN),',
+  'if (origin && origin !== resolveAmsgAllowedOrigin(env)) return deny;',
+  'if (!(await constantTimeEqual(supplied, env.AMSG_SERVER_TOKEN.trim()))) return deny;',
+  'cors: { origin: resolveAmsgAllowedOrigin(env) || "https://blocked.invalid", allowHeaders: CORS_ALLOW_HEADERS },',
 ].join('\n');
 
 describe('private AMSG artifact checker', () => {
