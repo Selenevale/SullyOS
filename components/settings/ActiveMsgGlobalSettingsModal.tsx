@@ -1227,6 +1227,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             className="inline-block text-xs font-bold text-violet-600 underline">
             查看我们的 AMSG 源码
           </a>
+          <a href="https://github.com/Selenevale/SullyOS/blob/hardening-v1/docs/private-cloudflare-preflight.md"
+            target="_blank" rel="noreferrer" className="ml-4 inline-block text-xs font-bold text-violet-600 underline">
+            查看私有版部署验收清单
+          </a>
         </div>
 
         {!PRIVATE_BASELINE && (
