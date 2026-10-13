@@ -15,7 +15,7 @@ import { reconcileStoppedReplies, stoppedReplyKey } from '../../../utils/amsgSto
  *   - D1 binding:  变量名 `DB`（库随便建一个，表由前端「连接」时 POST /init-tenant 幂等创建）
  *   - Cron Trigger: `* * * * *`（每分钟查一次到点任务，UTC）
  *   - env: AMSG_MASTER_KEY（64 位 hex）+ VAPID_EMAIL / VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY
- *          + 可选 AMSG_SERVER_TOKEN（配了则所有端点强制校验 X-Client-Token）
+ *          + 必须设置 AMSG_SERVER_TOKEN，敏感端点必须通过 X-Client-Token 验证
  *
  * 上面这些漏了哪样，`GET /config-check` 会直接列出来（见 inspectWorkerEnv），
  * 前端「连接并验证」也会读它，不用去翻 Cloudflare 的日志。排障时还有个信息更全的
@@ -129,8 +129,7 @@ import {
 } from '../../../utils/amsgToolPack';
 import { buildRealtimeWorldBlock, buildUserHolidayBlock } from './realtimeWorld';
 import { insertUserHolidayInProfile } from '../../../utils/userHolidays';
-import { authorizeSelfUpdate, handleSelfUpdate, resolveScriptName } from './selfUpdate';
-import { ensureSchemaOnce, readSelfUpdateState, recordManualSelfUpdate, runAutoUpdate, runScheduledAfterUpdate } from './autoUpdate';
+import { ensureSchemaOnce } from './autoUpdate';
 import { handleCronTriggerRead, handleCronTriggerWrite, isCronTriggerAuthFailure } from './cronTrigger';
 import {
   buildMcpDirectHeaders,
@@ -204,7 +203,7 @@ interface Env extends NativeFcmEnv {
   VAPID_EMAIL: string;
   VAPID_PUBLIC_KEY: string;
   VAPID_PRIVATE_KEY: string;
-  /** 可选共享密钥；配了才校验 X-Client-Token，不配则端点全开。 */
+  /** Private baseline requires a dedicated secret; missing token fails closed. */
   AMSG_SERVER_TOKEN?: string;
   /**
    * 排查「模型这轮没说话」时临时打开：填 1 后，跳过诊断日志（[amsg:skip-diag]）会带上模型回复的
@@ -2864,7 +2863,8 @@ export const buildWorkerConfig = (env: Env) => {
     vapid: effectiveVapid,
     webpush,
     // 前端和 Worker 不同源，带自定义头的请求会先发 CORS 预检，必须放行。
-    // 单用户自用默认全开；想收紧就把 '*' 换成自己的 SullyOS 站点 origin。
+    // Browser CORS allowlisting is a separate pre-deployment requirement;
+    // the private baseline rejects unauthenticated API calls even if CORS is permissive.
     // allowHeaders 显式给：上游默认那份不含 Content-Encoding，而 gzip 上行要用它
     // （见 CORS_ALLOW_HEADERS 那段注释）。
     cors: { origin: '*', allowHeaders: CORS_ALLOW_HEADERS },
@@ -2926,7 +2926,7 @@ export interface WorkerEnvReport {
   warnings: { code: string; message: string }[];
 }
 
-/** 缺了就一个请求都处理不了的两样东西，各自带一句「去哪儿补」。 */
+/** Private baseline: DB, encryption key and API access token are all mandatory. */
 const REQUIRED_ENV = [
   {
     key: 'DB',
@@ -2941,6 +2941,12 @@ const REQUIRED_ENV = [
     label: 'AMSG_MASTER_KEY',
     how: '在 Settings → Variables and Secrets 里加，类型选 Secret',
     isMissing: (env: Env) => !env.AMSG_MASTER_KEY?.trim(),
+  },
+  {
+    key: 'AMSG_SERVER_TOKEN',
+    label: 'AMSG_SERVER_TOKEN',
+    how: '在 Settings → Variables and Secrets 中设置为 Secret；建议生成至少 32 字节的随机值，不要提交到 GitHub',
+    isMissing: (env: Env) => !env.AMSG_SERVER_TOKEN?.trim(),
   },
 ] as const;
 
@@ -2985,13 +2991,6 @@ export const inspectWorkerEnv = (env: Env): WorkerEnvReport => {
     code: 'FCM_INCOMPLETE',
     message: 'FCM 配置只填了一部分；需要同时设置 FCM_PROJECT_ID、FCM_SERVICE_ACCOUNT_EMAIL、FCM_SERVICE_ACCOUNT_PRIVATE_KEY。',
   });
-  if (!env.AMSG_SERVER_TOKEN?.trim()) {
-    warnings.push({
-      code: 'SERVER_TOKEN_MISSING',
-      message: '没设 AMSG_SERVER_TOKEN，这个 Worker 地址对公网开放，知道地址的人都能读写你的任务。',
-    });
-  }
-
   return {
     ok: absent.length === 0,
     missing: absent.map((item) => item.key),
@@ -3392,15 +3391,12 @@ const readServerVersion = async (request: Request, env: Env) => {
  *   GET  /debug         上面那些再加库和 cron 的状况，给隔着屏幕帮人排障用
  *   GET  /tick-report   定时任务细账：过期任务各自卡在哪、报错原文、整轮报错（见 ./tickReport，要共享密钥）
  *   POST /instant-chat  即时对话：一个请求受理一轮聊天（见 ./instantChat）
- *   POST /self-update   自己去取最新代码覆盖自己（见 ./selfUpdate，要共享密钥 + CF_API_TOKEN）
- *   POST /self-update/check  App 冷启动时顺手问一句「该更新了没」，有节流（见 ./autoUpdate，认证同上）
+ *   /self-update 与 /self-update/check 已关闭；只能人工审查并手动部署 Worker 代码。
  *   GET/POST /cron-trigger  查看 / 暂停 / 恢复自己的 cron trigger（见 ./cronTrigger，认证同上）
  *   其它请求            配置不全时直接 503 + 说明缺什么，不进上游
  */
-// fetch 收第三个参数 ctx 只为 /self-update/check 一条路：它回 202 之后在 waitUntil 里把检查跑完
-// （几秒的事，30 秒上限够用；被掐了下一轮 cron 会再来）。别的路由都不用 ctx——
-// /instant-chat 回完 202 之后的那一跳跑在 InstantTickDO 的 alarm 里，不占这个请求的
-// 生命周期（waitUntil 只有 30 秒，见 InstantTickDO 的注释）。scheduled 只收 (event, env)。
+// /instant-chat 的即时任务跑在 InstantTickDO 的 alarm 中；无需 waitUntil
+// 或从客户端请求启动远程代码自更新。scheduled 只收 (event, env)。
 export default {
   async fetch(request: Request, env: Env, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
@@ -3438,50 +3434,40 @@ export default {
           // 旧代码执行，版本号对上了不代表新逻辑真的在跑。
           backgroundJobs: true,
           workerVersion: AMSG_BUNDLE_VERSION,
-          // 自动更新：有没有这个能力（配没配 CF_API_TOKEN，不回值）+ 最近一次检查的结果。
-          // 读的是诊断表，D1 没绑上时读不到就是 null，不影响上面那些照常回答。
-          selfUpdate: {
-            supported: Boolean(env.CF_API_TOKEN?.trim()),
-            state: await readSelfUpdateState(env.DB as TickReportDb | undefined),
-          },
+          // Privately deployed code must only change via reviewed manual deployment.
+          selfUpdate: { supported: false, state: null },
         },
       });
     }
 
-    if (pathname.endsWith('/self-update/check')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
-      if (method !== 'POST') {
-        return jsonWithCors(405, {
-          success: false,
-          error: { code: 'METHOD_NOT_ALLOWED', message: '/self-update/check 只接受 POST' },
-        });
-      }
-      // App 冷启动顺手问的一句「该更新了没」。门跟 /self-update 一样高（它同样能让 Worker
-      // 覆盖自己的代码）。回 202 就走人：检查本身在 waitUntil 里跑，页面关了也不影响；
-      // 结果记进诊断表，设置页从 /config-check 读。节流在 runAutoUpdate 里，这里不重复判。
-      const gate = await authorizeSelfUpdate(request, env);
-      if (!gate.ok) {
-        return jsonWithCors(gate.code === 'CF_TOKEN_MISSING' ? 400 : 401, {
-          success: false,
-          error: { code: gate.code, message: gate.message },
-        });
-      }
-      const db = env.DB as TickReportDb | undefined;
-      if (typeof db?.prepare !== 'function') {
-        return jsonWithCors(503, {
-          success: false,
-          error: { code: 'WORKER_CONFIG_MISSING', message: '没绑 D1，记不下检查结果，先把 DB 绑上。' },
-        });
-      }
-      const check = runAutoUpdate(env, db, {
-        source: 'client',
-        scriptName: resolveScriptName(env, request.url),
-      }).catch((error) => {
-        console.warn('[amsg:auto-update] 冷启动触发的检查没跑完', error);
+    // Update endpoints have intentionally been removed. Do not rely on a
+    // privileged Cloudflare API token or fetch third-party worker bundles.
+    if (pathname.endsWith('/self-update') || pathname.endsWith('/self-update/check')) {
+      return jsonWithCors(404, {
+        success: false,
+        error: { code: 'SELF_UPDATE_DISABLED', message: '请审核代码后手动部署更新。' },
       });
-      if (ctx?.waitUntil) ctx.waitUntil(check);
-      else await check;
-      return jsonWithCors(202, { success: true, data: { accepted: true } });
+    }
+
+    // A harmless config report is public so a mistaken token can be diagnosed.
+    // Everything else, including diagnostics, must have the required Worker
+    // configuration AND a valid client token before any state is read/written.
+    const report = inspectWorkerEnv(env);
+    if (!report.ok) {
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return jsonWithCors(503, {
+        success: false,
+        error: { code: 'WORKER_CONFIG_MISSING', message: report.message, missing: report.missing },
+      });
+    }
+    if (method !== 'OPTIONS') {
+      const supplied = request.headers.get('X-Client-Token') ?? '';
+      if (!supplied || !(await constantTimeEqual(supplied, env.AMSG_SERVER_TOKEN!.trim()))) {
+        return jsonWithCors(401, {
+          success: false,
+          error: { code: 'INVALID_CLIENT_TOKEN', message: '访问密码无效或缺失' },
+        });
+      }
     }
 
     if (pathname.endsWith('/debug')) {
@@ -3502,26 +3488,6 @@ export default {
           schema: probe.schema,
           vapidPublicKey: env.VAPID_PUBLIC_KEY?.trim() || null,
         },
-      });
-    }
-
-    if (pathname.endsWith('/self-update')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
-      if (method !== 'POST') {
-        return jsonWithCors(405, {
-          success: false,
-          error: { code: 'METHOD_NOT_ALLOWED', message: '/self-update 只接受 POST' },
-        });
-      }
-      // 排在下面那道配置门之前：配置缺了一半正是想更新一版试试的时候，
-      // 被门挡住反而没法自救。它自己校验共享密钥，不吃这道门的豁免。
-      const result = await handleSelfUpdate(request, env);
-      // 装上的那份指纹是之后自动检查的比对基准；换了代码也要让新代码下一跳重新查表。
-      await recordManualSelfUpdate(env.DB as TickReportDb | undefined, result);
-      return jsonWithCors(result.ok ? 200 : 400, {
-        success: result.ok,
-        data: result.ok ? result : undefined,
-        error: result.ok ? undefined : { code: result.code, message: result.message },
       });
     }
 
@@ -3563,17 +3529,6 @@ export default {
       return jsonWithCors(isCronTriggerAuthFailure(result.code) ? 401 : 400, {
         success: false,
         error: { code: result.code, message: result.message },
-      });
-    }
-
-    const report = inspectWorkerEnv(env);
-    if (!report.ok) {
-      // 预检也得放行：带自定义头的请求会先发 OPTIONS，这一步被挡住的话正式请求
-      // 根本发不出去，下面那句 503 用户就永远看不到。
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
-      return jsonWithCors(503, {
-        success: false,
-        error: { code: 'WORKER_CONFIG_MISSING', message: report.message, missing: report.missing },
       });
     }
 
@@ -3636,19 +3591,10 @@ export default {
       console.error(`[amsg] 定时任务整轮跳过：${report.message}`);
       return;
     }
-    // 更新检查先走，数据库维护失败时仍有机会换上修复包。
-    await runScheduledAfterUpdate(
-      () => runAutoUpdate(env, env.DB as TickReportDb, {
-        source: 'cron',
-        scriptName: env.CF_SCRIPT_NAME?.trim() || null,
-      }),
-      async () => {
-        // 新版需要的表和索引只补一次，自动更新后的第一跳也能补齐。
-        await ensureSchemaOnce(env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(env));
-        const outcome = await upstream.scheduled(event, env);
-        // 投递错误记进体检面板；正常的一跳不写诊断记录。
-        await recordTickOutcome(env.DB as unknown as TickReportDb, outcome);
-      },
-    );
+    // Database schema maintenance is allowed; replacing deployed source code
+    // is not. Update the bundle by a reviewed manual Cloudflare deployment.
+    await ensureSchemaOnce(env.DB as TickReportDb | undefined, SCHEMA_VERSION, () => upstream.ensureSchema(env));
+    const outcome = await upstream.scheduled(event, env);
+    await recordTickOutcome(env.DB as unknown as TickReportDb, outcome);
   },
 };
