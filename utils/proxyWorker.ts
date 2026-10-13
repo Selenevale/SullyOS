@@ -20,7 +20,7 @@
  * 跟这里是两回事。
  */
 
-export const DEFAULT_PROXY_WORKER = 'https://proxy.friedsully.com';
+export const DEFAULT_PROXY_WORKER = 'https://proxy.invalid';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
 const SETTINGS_FOCUS_SESSION_KEY = 'sully_settings_focus_proxy_worker_v1';
