@@ -62,15 +62,17 @@ function isUnsafeFetchTarget(parsed) {
 // 读 Response body, 累加到 maxBytes 就停 (防超大页面打爆 worker)。
 async function readBodyCapped(res, maxBytes) {
   const reader = (res.body && res.body.getReader) ? res.body.getReader() : null;
-  if (!reader) return await res.text();
+  if (!reader) return (await res.text()).slice(0, maxBytes);
   const chunks = [];
   let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     if (value) {
-      total += value.length;
-      chunks.push(value);
+      const room = Math.max(0, maxBytes - total);
+      const chunk = value.subarray(0, room);
+      chunks.push(chunk);
+      total += chunk.length;
       if (total >= maxBytes) { try { await reader.cancel(); } catch (e) { /* ignore */ } break; }
     }
   }
@@ -2612,7 +2614,10 @@ export default {
     //   1) Jina Reader (r.jina.ai)：后端渲染 JS/SPA + 正文提取，MSN/微博/知乎这类动态页也能读到正文；
     //   2) 失败/限速时回退裸抓 HTML，前端用 DOMParser 兜底提取。
     // 返回 data.mode 区分：'reader'(干净正文 content) / 'raw'(原始 html)。
-    // 可选 env.JINA_API_KEY 提升 Jina 速率（无 key 也能用，走 IP 限速）。SSRF 防护 + 2MB 截断。
+    // Private baseline: Jina Reader is opt-in because URL metadata otherwise
+    // goes to a third party. Set PROXY_ENABLE_JINA_READER=1 only if desired.
+    // URL-level SSRF checks + 2MB result cap are not substitutes for runtime
+    // egress/public-IP restrictions.
     if (url.pathname === '/fetch-webpage') {
       if (request.method !== 'POST') {
         return jsonResponse({ error: 'Method not allowed. Use POST.' }, { status: 405, origin });
@@ -2631,8 +2636,8 @@ export default {
         return jsonResponse({ error: '只允许抓取公网 http(s) 网页' }, { status: 400, origin });
       }
 
-      // 1) Jina Reader 优先（渲染 + 正文提取）。失败静默回退裸抓，不影响整体。
-      {
+      // 1) Jina Reader is disabled unless explicitly opted into third-party fetch.
+      if (env?.PROXY_ENABLE_JINA_READER === '1') {
         const jc = new AbortController();
         const jt = setTimeout(() => jc.abort(), 20000); // 渲染慢，给 20s
         try {
