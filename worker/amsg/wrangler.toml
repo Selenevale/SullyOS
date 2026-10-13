@@ -64,4 +64,6 @@ crons = ["* * * * *"]
 #   VAPID_PUBLIC_KEY    必须和 SullyOS「推送凭据 (VAPID)」面板里的是同一对，
 #   VAPID_PRIVATE_KEY   否则 worker 用别的密钥对签推送会 403
 #   VAPID_EMAIL         可选；缺则回退 mailto: 默认值
-#   AMSG_SERVER_TOKEN   可选；配了则所有端点强制校验 X-Client-Token
+#   AMSG_SERVER_TOKEN   必填 Secret；所有涉及私人数据的接口校验 X-Client-Token
+#   AMSG_ALLOWED_ORIGIN 必填：仅允许对应的 Pages 网页 Origin，例 https://my-site.pages.dev
+#   CF_API_TOKEN       私有版禁止配置；云端自动更新已关闭，代码只可人工审查后发布
