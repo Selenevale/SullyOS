@@ -17,10 +17,11 @@
 // through this pipeline.
 
 import { build } from 'esbuild';
-import { existsSync, statSync, copyFileSync } from 'fs';
+import { existsSync, statSync, copyFileSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { workerBundleBanner, workerBundleOptions } from './worker-bundle-options.mjs';
+import { assertPrivateAmsgBundle } from './verify-private-amsg-bundle.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -78,6 +79,12 @@ for (const w of WORKERS) {
 
   for (const out of outputs) {
     await build({ ...workerBundleOptions, entryPoints: [entry], outfile: out, banner: workerBundleBanner });
+    if (w.name === 'amsg') {
+      // Release safety gate applies to BOTH downloadable and deployed artifacts.
+      // A tracked old bundle may exist even when hardened source has been saved.
+      assertPrivateAmsgBundle(readFileSync(out, 'utf8'), out);
+      console.log('✓ private AMSG security markers verified in', out);
+    }
   }
 
   const sizeRef = outWorker || outPublic;
