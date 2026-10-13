@@ -129,28 +129,34 @@ export const buildToolConfig = (
 ): AmsgToolConfig => {
   const rc = realtimeConfig;
   const xhs = rc?.xhsMcpConfig;
+  // Only credentials for actively enabled cloud tools should enter tool_config.
+  // Turning a feature off must not continue copying a cached API key/cookie.
+  const weatherOn = rc?.weatherEnabled === true;
+  const newsOn = rc?.newsEnabled === true;
+  const notionOn = rc?.notionEnabled === true;
+  const feishuOn = rc?.feishuEnabled === true;
   return {
     v: 1,
     proxyWorkerUrl: getProxyWorkerUrl(),
-    weatherEnabled: !!rc?.weatherEnabled,
-    ...(rc?.userHolidays ? { userHolidays: { ...rc.userHolidays, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } } : {}),
-    ...(rc?.weatherCity ? { weatherCity: rc.weatherCity } : {}),
-    ...(rc?.weatherApiKey ? { weatherApiKey: rc.weatherApiKey } : {}),
-    newsEnabled: !!rc?.newsEnabled,
-    ...(rc?.newsApiKey ? { newsApiKey: rc.newsApiKey } : {}),
-    ...(rc?.newsPlatforms?.length ? { newsPlatforms: rc.newsPlatforms } : {}),
-    notionEnabled: !!rc?.notionEnabled,
-    ...(rc?.notionApiKey ? { notionApiKey: rc.notionApiKey } : {}),
-    ...(rc?.notionDatabaseId ? { notionDatabaseId: rc.notionDatabaseId } : {}),
-    ...(rc?.notionNotesDatabaseId ? { notionNotesDatabaseId: rc.notionNotesDatabaseId } : {}),
-    feishuEnabled: !!rc?.feishuEnabled,
-    ...(rc?.feishuAppId ? { feishuAppId: rc.feishuAppId } : {}),
-    ...(rc?.feishuAppSecret ? { feishuAppSecret: rc.feishuAppSecret } : {}),
-    ...(rc?.feishuBaseId ? { feishuBaseId: rc.feishuBaseId } : {}),
-    ...(rc?.feishuTableId ? { feishuTableId: rc.feishuTableId } : {}),
+    weatherEnabled: weatherOn,
+    ...(rc?.userHolidays?.enabled ? { userHolidays: { ...rc.userHolidays, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } } : {}),
+    ...(weatherOn && rc?.weatherCity ? { weatherCity: rc.weatherCity } : {}),
+    ...(weatherOn && rc?.weatherApiKey ? { weatherApiKey: rc.weatherApiKey } : {}),
+    newsEnabled: newsOn,
+    ...(newsOn && rc?.newsApiKey ? { newsApiKey: rc.newsApiKey } : {}),
+    ...(newsOn && rc?.newsPlatforms?.length ? { newsPlatforms: rc.newsPlatforms } : {}),
+    notionEnabled: notionOn,
+    ...(notionOn && rc?.notionApiKey ? { notionApiKey: rc.notionApiKey } : {}),
+    ...(notionOn && rc?.notionDatabaseId ? { notionDatabaseId: rc.notionDatabaseId } : {}),
+    ...(notionOn && rc?.notionNotesDatabaseId ? { notionNotesDatabaseId: rc.notionNotesDatabaseId } : {}),
+    feishuEnabled: feishuOn,
+    ...(feishuOn && rc?.feishuAppId ? { feishuAppId: rc.feishuAppId } : {}),
+    ...(feishuOn && rc?.feishuAppSecret ? { feishuAppSecret: rc.feishuAppSecret } : {}),
+    ...(feishuOn && rc?.feishuBaseId ? { feishuBaseId: rc.feishuBaseId } : {}),
+    ...(feishuOn && rc?.feishuTableId ? { feishuTableId: rc.feishuTableId } : {}),
     // 小红书服务器多半就跑在用户自己电脑上（localhost:xxxx）。worker 从 CF 那头连不上，
     // 这份配置上了云也只是让角色去撞一次必失败的调用，所以够不着的干脆不带。
-    ...(xhs?.serverUrl && isWorkerReachableUrl(xhs.serverUrl)
+    ...(xhs?.enabled === true && xhs.serverUrl && isWorkerReachableUrl(xhs.serverUrl)
       ? {
           xhsMcpConfig: {
             enabled: !!xhs.enabled,
