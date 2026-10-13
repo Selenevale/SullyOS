@@ -42,23 +42,20 @@ function jsonResponse(obj, { status = 200, origin } = {}) {
   });
 }
 
-// ---- /fetch-webpage 用: SSRF 防护 + body 大小上限 ----
-// 网页分享代理只抓用户粘贴的公网网页, 拒绝 loopback / 私有网段 / link-local / 内网后缀。
+// Only public http(s) hostnames, never literals or internal/special-use names.
+// This is a URL-level defense. DNS resolution/routing policy must still enforce
+// public destinations (URL checks alone cannot prevent DNS rebinding).
 function isUnsafeFetchTarget(parsed) {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (host === '::1' || host === '0.0.0.0') return true;
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (v4) {
-    const a = Number(v4[1]), b = Number(v4[2]);
-    if (a === 127 || a === 10 || a === 0) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-  }
-  // IPv6 唯一本地 (fc00::/7) / link-local (fe80::/10)
-  if (/^f[cd][0-9a-f]{2}:/i.test(host) || /^fe[89ab][0-9a-f]:/i.test(host)) return true;
+  if (parsed.username || parsed.password) return true;
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (!host || !host.includes(':') && !host.includes('.')) return true;
+  // Bare IPv4/IPv6 IP URLs are not required by webpage sharing, and blocking
+  // all of them avoids the many alternate IP encodings used for SSRF.
+  if (host.includes(':') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return true;
+  if (['localhost', 'local', 'internal', 'test', 'invalid', 'example', 'onion'].some(
+    suffix => host === suffix || host.endsWith('.' + suffix)
+  )) return true;
   return false;
 }
 
@@ -2478,11 +2475,18 @@ export default {
       let parsedTarget;
       try {
         parsedTarget = new URL(targetUrl);
-        if (parsedTarget.protocol !== 'https:') {
-          return jsonResponse({ error: 'Only HTTPS URLs allowed' }, { status: 400, origin });
-        }
       } catch {
         return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      if (parsedTarget.protocol !== 'https:' || isUnsafeFetchTarget(parsedTarget)) {
+        return jsonResponse({ error: 'Only public HTTPS hostnames without URL credentials are allowed' }, { status: 400, origin });
+      }
+      // Explicit opt-in per WebDAV host. No wildcard or implicit arbitrary-URL relay.
+      // Example Worker variable: PROXY_WEBDAV_ALLOWED_HOSTS=dav.example.com
+      const webdavHosts = String(env?.PROXY_WEBDAV_ALLOWED_HOSTS || '')
+        .split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+      if (!webdavHosts.includes(parsedTarget.hostname.toLowerCase().replace(/\.$/, ''))) {
+        return jsonResponse({ error: 'WebDAV host is not enabled on this proxy' }, { status: 403, origin });
       }
       const webdavMethod = (request.headers.get('X-WebDAV-Method') || 'GET').toUpperCase();
       const allowedMethods = ['GET', 'PUT', 'PROPFIND', 'MKCOL', 'DELETE'];
@@ -2510,8 +2514,10 @@ export default {
           method: webdavMethod,
           headers: forwardHeaders,
           body,
+          // Never forward WebDAV credentials to a redirect destination.
+          redirect: 'manual',
         });
-        console.log('webdav', webdavMethod, targetUrl, '→', upstream.status);
+        console.log('webdav', webdavMethod, parsedTarget.hostname, '→', upstream.status);
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
@@ -2638,7 +2644,7 @@ export default {
             const d = jj && jj.data;
             const content = (d && typeof d.content === 'string') ? d.content.trim() : '';
             if (content) {
-              console.log('fetch-webpage[jina]', target.toString(), '→', content.length, 'chars');
+              console.log('fetch-webpage[jina]', target.hostname, '→', content.length, 'chars');
               return jsonResponse({ success: true, data: { mode: 'reader', title: (d.title || '').trim(), content, finalUrl: d.url || target.toString() } }, { origin });
             }
           }
@@ -2652,15 +2658,33 @@ export default {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 8000);
       try {
-        const upstream = await fetch(target.toString(), {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; SullyOS-WebpageBot/1.0; +https://github.com/sully)',
-            'Accept': 'text/html,application/xhtml+xml',
-          },
-          redirect: 'follow',
-          signal: controller.signal,
-        });
+        let current = target;
+        let upstream = null;
+        for (let hop = 0; hop < 6; hop++) {
+          if (isUnsafeFetchTarget(current)) {
+            return jsonResponse({ error: 'Redirect target is not a public webpage' }, { status: 400, origin });
+          }
+          const response = await fetch(current.toString(), {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; SullyOS-WebpageBot/1.0; +https://github.com/sully)',
+              'Accept': 'text/html,application/xhtml+xml',
+            },
+            redirect: 'manual',
+            signal: controller.signal,
+          });
+          const location = response.headers.get('Location');
+          if ([301, 302, 303, 307, 308].includes(response.status) && location) {
+            if (response.body) await response.body.cancel();
+            current = new URL(location, current);
+            continue;
+          }
+          upstream = response;
+          break;
+        }
+        if (!upstream) {
+          return jsonResponse({ error: 'Too many webpage redirects' }, { status: 502, origin });
+        }
         if (!upstream.ok) {
           return jsonResponse({ error: `目标站点返回 HTTP ${upstream.status}` }, { status: 502, origin });
         }
@@ -2669,8 +2693,8 @@ export default {
           return jsonResponse({ error: `不支持的内容类型: ${ct}` }, { status: 415, origin });
         }
         const html = await readBodyCapped(upstream, 2 * 1024 * 1024);
-        console.log('fetch-webpage[raw]', target.toString(), '→', upstream.status, html.length, 'chars');
-        return jsonResponse({ success: true, data: { mode: 'raw', html, finalUrl: upstream.url || target.toString(), contentType: ct } }, { origin });
+        console.log('fetch-webpage[raw]', current.hostname, '→', upstream.status, html.length, 'chars');
+        return jsonResponse({ success: true, data: { mode: 'raw', html, finalUrl: current.toString(), contentType: ct } }, { origin });
       } catch (e) {
         const aborted = e && e.name === 'AbortError';
         return jsonResponse(
