@@ -84,6 +84,27 @@ afterEach(async () => {
 });
 
 describe('主动消息 2.0 配置入口', () => {
+  it('私有版部署入口不要求 Cloudflare 管理 Token，也不展示公共自动部署按钮', async () => {
+    await render();
+    expect(host.textContent).toContain('私有版 · 手动部署主动消息 Worker');
+    expect(host.textContent).toContain('AMSG_ALLOWED_ORIGIN');
+    expect(host.querySelector('input[placeholder="粘贴 Cloudflare API Token"]')).toBeNull();
+    expect(host.textContent).not.toContain('一键部署（推荐）');
+    expect(Array.from(host.querySelectorAll('button')).some(b => b.textContent?.includes('开始部署'))).toBe(false);
+    expect(host.textContent).toContain('专用访问密码（必填');
+  });
+
+  it('已经连接的私有 Worker 只能手动更新，不能补高权限 Token', async () => {
+    client.getGlobalConfig.mockResolvedValue({
+      ...initialConfig, workerUrl: 'https://worker.invalid', initializedAt: 1,
+    });
+    await render();
+    expect(host.textContent).toContain('私有版不支持在网页里自动更新 Worker');
+    expect(host.querySelector('input[placeholder="粘贴 Cloudflare API Token"]')).toBeNull();
+    expect(Array.from(host.querySelectorAll('button')).some(b => b.textContent?.includes('重新检查并更新 Worker'))).toBe(false);
+    expect(host.textContent).not.toContain('装上钥匙');
+  });
+
   it('本地配置还没返回时先显示可关闭的加载面板', async () => {
     client.getGlobalConfig.mockReturnValue(new Promise(() => {}));
     await render();
