@@ -1087,6 +1087,7 @@ describe('VAPID 配置', () => {
     AMSG_MASTER_KEY: 'k'.repeat(64),
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: {},
   } as any;
 
@@ -1111,12 +1112,17 @@ describe('VAPID 配置', () => {
   it('上游 config 的 allowHeaders 跟包装层预检那份是同一串，且都放行 Content-Encoding', async () => {
     const config = buildWorkerConfig(baseEnv);
     const preflight = await (worker as any).fetch(
-      new Request('https://w.example/instant-chat', { method: 'OPTIONS' }),
+      new Request('https://w.example/instant-chat', {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://private.pages.dev' },
+      }),
       baseEnv,
       { waitUntil: () => {} },
     );
     expect(config.cors.allowHeaders).toBe(preflight.headers.get('Access-Control-Allow-Headers'));
     expect(config.cors.allowHeaders).toContain('Content-Encoding');
+    expect(config.cors.origin).toBe('https://private.pages.dev');
+    expect(config.cors.origin).toBe(preflight.headers.get('Access-Control-Allow-Origin'));
   });
 
   it('解析函数本身：缺省/空白回退，配了就原样用', () => {
