@@ -3819,6 +3819,29 @@ describe('worker 入口 — 配置不全时的响应', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
+  it('AMSG_SERVER_TOKEN 未配置时所有私人入口都拒绝访问', async () => {
+    const noTokenEnv = { ...fullEnv, AMSG_SERVER_TOKEN: undefined };
+    for (const path of ['/debug', '/capabilities', '/tick-report', '/init-tenant', '/instant-chat']) {
+      const response = await call('https://w.example' + path, { method: path === '/instant-chat' ? 'POST' : 'GET' }, noTokenEnv);
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body.error.missing).toContain('AMSG_SERVER_TOKEN');
+    }
+  });
+
+  it('即便配置了 Worker 密码，缺密码或输错也不能读诊断或调用上游', async () => {
+    for (const path of ['/debug', '/capabilities', '/instant-chat']) {
+      for (const supplied of ['', 'wrong-token']) {
+        const response = await (worker as any).fetch(new Request('https://w.example' + path, {
+          method: path === '/instant-chat' ? 'POST' : 'GET',
+          headers: supplied ? { 'X-Client-Token': supplied } : {},
+        }), fullEnv);
+        expect(response.status).toBe(401);
+        expect((await response.json()).error.code).toBe('INVALID_CLIENT_TOKEN');
+      }
+    }
+  });
+
   it('配置齐全时放行到上游：/vapid-public-key 该由上游回公钥，不能被自检层截胡', async () => {
     const response = await call('https://w.example/vapid-public-key', {}, fullEnv);
     expect(response.status).toBe(200);
