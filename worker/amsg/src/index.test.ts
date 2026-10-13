@@ -3710,6 +3710,7 @@ describe('inspectWorkerEnv — 配置自检', () => {
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
     AMSG_SERVER_TOKEN: 'shared-secret',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: { prepare: () => {} },
   } as any;
 
@@ -3756,6 +3757,12 @@ describe('inspectWorkerEnv — 配置自检', () => {
     expect(report.warnings.map((w: any) => w.code)).toContain('VAPID_MISSING');
   });
 
+  it('AMSG_ALLOWED_ORIGIN is required to serve a browser-facing Worker', () => {
+    expect(inspectWorkerEnv({ ...fullEnv, AMSG_ALLOWED_ORIGIN: undefined }).missing).toContain('AMSG_ALLOWED_ORIGIN');
+    expect(inspectWorkerEnv({ ...fullEnv, AMSG_ALLOWED_ORIGIN: '*' }).missing).toContain('AMSG_ALLOWED_ORIGIN');
+    expect(inspectWorkerEnv({ ...fullEnv, AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev/path' }).missing).toContain('AMSG_ALLOWED_ORIGIN');
+  });
+
   it('私有版缺少共享密钥时直接判配置不完整，不仅仅给警告', () => {
     const report = inspectWorkerEnv({ ...fullEnv, AMSG_SERVER_TOKEN: undefined });
     expect(report.ok).toBe(false);
@@ -3764,13 +3771,14 @@ describe('inspectWorkerEnv — 配置自检', () => {
 });
 
 describe('worker 入口 — 配置不全时的响应', () => {
-  const brokenEnv = { AMSG_MASTER_KEY: '', DB: undefined } as any;
+  const brokenEnv = { AMSG_MASTER_KEY: '', DB: undefined, AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev' } as any;
   const fullEnv = {
     AMSG_MASTER_KEY: 'a'.repeat(64),
     VAPID_EMAIL: 'mailto:a@b.c',
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
     AMSG_SERVER_TOKEN: 'shared-secret',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: { prepare: () => {} },
   } as any;
 
@@ -3779,6 +3787,7 @@ describe('worker 入口 — 配置不全时的响应', () => {
       ...init,
       headers: {
         ...(env.AMSG_SERVER_TOKEN ? { 'X-Client-Token': env.AMSG_SERVER_TOKEN } : {}),
+        Origin: 'https://private.pages.dev',
         ...(init.headers as Record<string, string> || {}),
       },
     }), env, { waitUntil: () => {} });
@@ -3793,13 +3802,13 @@ describe('worker 入口 — 配置不全时的响应', () => {
 
   it('这个响应必须带 CORS 头，否则浏览器不让前端读，又变回 "Failed to fetch"', async () => {
     const response = await call('https://w.example/messages');
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
   });
 
   it('配置不全时预检照样放行——预检被挡住的话正式请求根本发不出去', async () => {
     const response = await call('https://w.example/messages', { method: 'OPTIONS' });
     expect(response.status).toBe(204);
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
   });
 
   // 大 body 走 gzip 上行时请求带 Content-Encoding，而它不在 CORS 安全列表里 ——
@@ -3816,7 +3825,7 @@ describe('worker 入口 — 配置不全时的响应', () => {
     const body = await response.json();
     expect(body.data.ok).toBe(false);
     expect(body.data.missing).toEqual(['DB', 'AMSG_MASTER_KEY', 'AMSG_SERVER_TOKEN']);
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
   });
 
   it('AMSG_SERVER_TOKEN 未配置时所有私人入口都拒绝访问', async () => {
@@ -3840,6 +3849,36 @@ describe('worker 入口 — 配置不全时的响应', () => {
         expect((await response.json()).error.code).toBe('INVALID_CLIENT_TOKEN');
       }
     }
+  });
+
+  it('untrusted browser origins cannot preflight, inspect, or call upstream endpoints', async () => {
+    for (const endpoint of ['/config-check', '/debug', '/capabilities', '/init-tenant']) {
+      for (const method of ['GET', 'OPTIONS']) {
+        const response = await (worker as any).fetch(new Request('https://w.example' + endpoint, {
+          method,
+          headers: {
+            Origin: 'https://attacker.example',
+            'X-Client-Token': 'shared-secret',
+          },
+        }), fullEnv);
+        expect(response.status).toBe(403);
+        expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      }
+    }
+  });
+
+  it('exact allowed origin has preflight with content-encoding, a Vary header and never wildcard', async () => {
+    const response = await call('https://w.example/capabilities', { method: 'OPTIONS' }, fullEnv);
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Content-Encoding');
+    expect(response.headers.get('Vary')).toBe('Origin');
+  });
+
+  it('requests without an Origin still require the API token; CORS does not authenticate them', async () => {
+    const noToken = await (worker as any).fetch(new Request('https://w.example/debug'), fullEnv);
+    expect(noToken.status).toBe(401);
+    expect(noToken.headers.get('Access-Control-Allow-Origin')).toBeNull();
   });
 
   it('配置齐全时放行到上游：/vapid-public-key 该由上游回公钥，不能被自检层截胡', async () => {
@@ -3954,6 +3993,7 @@ describe('/debug — 只读诊断', () => {
     VAPID_PUBLIC_KEY: 'pub-key',
     VAPID_PRIVATE_KEY: 'priv-key',
     AMSG_SERVER_TOKEN: 'shared-secret',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: db,
   } as any);
 
@@ -4795,6 +4835,7 @@ describe('即时对话的接线', () => {
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
     AMSG_SERVER_TOKEN: 'shared-secret',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: { prepare: () => {} },
   } as any;
 
@@ -4803,6 +4844,7 @@ describe('即时对话的接线', () => {
       ...init,
       headers: {
         'X-Client-Token': env.AMSG_SERVER_TOKEN || '',
+        Origin: 'https://private.pages.dev',
         ...(init.headers as Record<string, string> || {}),
       },
     }), env, { waitUntil: () => {} });
@@ -4855,13 +4897,13 @@ describe('即时对话的接线', () => {
   it('/instant-chat 的预检要放行，否则带自定义头的正式请求根本发不出去', async () => {
     const response = await call('https://w.example/instant-chat', { method: 'OPTIONS' });
     expect(response.status).toBe(204);
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
   });
 
   it('/instant-chat 只接受 POST', async () => {
     const response = await call('https://w.example/instant-chat', { method: 'GET' });
     expect(response.status).toBe(405);
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://private.pages.dev');
   });
 
   it('配置不全时 /instant-chat 也回 503（不进上游、不半路落状态）', async () => {
