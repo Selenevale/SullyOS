@@ -45,7 +45,7 @@ describe('private proxy external destination boundaries', () => {
   });
 
   it('forwards to an explicitly allowed WebDAV hostname without following redirects', async () => {
-    const outbound = vi.fn(async () => new Response(null, {
+    const outbound = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, {
       status: 302,
       headers: { Location: 'https://other.example.com/secret' },
     }));
@@ -65,7 +65,7 @@ describe('private proxy external destination boundaries', () => {
   });
 
   it('checks the destination after a webpage redirect', async () => {
-    const outbound = vi.fn(async () => new Response(null, {
+    const outbound = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, {
       status: 302,
       headers: { Location: 'http://127.0.0.1/private' },
     }));
