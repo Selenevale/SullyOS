@@ -427,7 +427,7 @@ function xhsFetch(cookie, api, method = 'GET', body = null, options = {}) {
     'X-b3-traceid': crypto.randomUUID().replace(/-/g, '').slice(0, 16),
   };
 
-  const fetchOptions = { method, headers };
+  const fetchOptions = { method, headers, redirect: 'manual' };
   if (method === 'POST' || method === 'PUT') {
     headers['Content-Type'] = 'application/json;charset=UTF-8';
     if (body) fetchOptions.body = JSON.stringify(body);
@@ -2731,7 +2731,7 @@ export default {
         return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
       }
       const allowedHosts = new Set(['api.github.com', 'uploads.github.com']);
-      if (parsedGh.protocol !== 'https:' || !allowedHosts.has(parsedGh.hostname)) {
+      if (parsedGh.protocol !== 'https:' || parsedGh.username || parsedGh.password || !allowedHosts.has(parsedGh.hostname)) {
         return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
       }
       const ghMethod = (request.headers.get('X-GitHub-Method') || 'GET').toUpperCase();
@@ -3138,7 +3138,8 @@ export default {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Cookie': cookie,
                 'Accept': 'text/html,application/xhtml+xml',
-              }
+              },
+              redirect: 'manual',
             });
             const html = await htmlRes.text();
             const stateMatch = html.match(/__INITIAL_STATE__\s*=\s*({[\s\S]*?})\s*<\/script>/);
@@ -3252,7 +3253,8 @@ export default {
               'Sec-Fetch-Mode': 'navigate',
               'Sec-Fetch-Site': 'none',
             },
-            redirect: 'follow'
+            // Do not follow a cross-origin redirect with the caller's Cookie.
+            redirect: 'manual'
           });
 
           const html = await htmlRes.text();
@@ -3381,7 +3383,8 @@ export default {
               'Sec-Fetch-Mode': 'navigate',
               'Sec-Fetch-Site': 'none',
             },
-            redirect: 'follow'
+            // Do not follow a cross-origin redirect with the caller's Cookie.
+            redirect: 'manual'
           });
 
           const html = await exploreRes.text();
