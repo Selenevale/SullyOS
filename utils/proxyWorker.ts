@@ -9,7 +9,7 @@
  *   - Notion 集成                             → /notion/*
  *   - 飞书多维表格集成                        → /feishu/*
  *   - 麦当劳 / 瑞幸 点单 MCP                   → /mcp/mcd /mcp/luckin
- *   - Cloudflare API 中转（一键部署后端用）    → /cf-api
+ *   - Cloudflare API 中转                      → 已从本私有版移除
  *
  * 私有部署默认不连接真实网络代理：未配置时使用 .invalid 占位地址，
  * 相关代理功能会失败，而不是自动将请求发给作者的公共 Worker。
