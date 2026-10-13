@@ -14,6 +14,8 @@
 ## 本地构建与测试（必须实际运行）
 
 - [ ] 使用锁定版本安装依赖（项目根目录 `pnpm install --frozen-lockfile`），记录所用 Node/pnpm 版本。
+- [ ] 可先执行无需项目依赖的 `node --test scripts/verify-private-amsg-bundle.test.mjs`（也可运行 `pnpm run test:private-artifact`）检查安全产物验证器本身；**这不能取代**全项目测试。
+- [ ] `scripts/build-workers.mjs` 现在会自动对 **两个** AMSG 构建产物做 fail-closed 保护校验：缺少 AMSG_ALLOWED_ORIGIN / API 令牌验证 / 禁止自更新等代码就会让构建报错。禁止通过跳过此步骤部署仓库已跟踪的旧 `worker/amsg/worker.bundle.js`。
 - [ ] 执行 `pnpm run test:run`，尤其核查 `worker/proxyHardening.test.ts`、`worker/proxyNetworkBoundary.test.ts`、`worker/proxyCredentialBoundary.test.ts`、`worker/amsg/src/index.test.ts`、`utils/amsgToolPack.test.ts`、`utils/activeMsgSettingsModal.test.ts`。
 - [ ] 执行 `pnpm exec tsc --noEmit` 或项目等价 TS 校验，再运行 `pnpm run build` 并检查 `dist/`。
 - [ ] **特别注意旧 Worker bundle**：源码 `worker/amsg/src/index.ts` 和 `worker/amsg/worker.bundle.js` 是两个文件。提交源码不会自动重打包已经跟踪的 `worker.bundle.js`。必须先运行 `pnpm run build:workers`（`pnpm run build` 也会运行），确认重新生成的 `worker/amsg/worker.bundle.js` 及 `public/amsg-worker.bundle.js` 确实包含私有版的访问控制，再发布。**严禁直接上传仓库中未重新构建的旧 bundle。**
