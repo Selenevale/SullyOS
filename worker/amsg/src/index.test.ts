@@ -3756,10 +3756,10 @@ describe('inspectWorkerEnv — 配置自检', () => {
     expect(report.warnings.map((w: any) => w.code)).toContain('VAPID_MISSING');
   });
 
-  it('没配共享密钥时提醒端点是公开的（这种坏法完全静默，不提醒没人会发现）', () => {
+  it('私有版缺少共享密钥时直接判配置不完整，不仅仅给警告', () => {
     const report = inspectWorkerEnv({ ...fullEnv, AMSG_SERVER_TOKEN: undefined });
-    expect(report.ok).toBe(true);
-    expect(report.warnings.map((w: any) => w.code)).toContain('SERVER_TOKEN_MISSING');
+    expect(report.ok).toBe(false);
+    expect(report.missing).toContain('AMSG_SERVER_TOKEN');
   });
 });
 
@@ -3770,18 +3770,25 @@ describe('worker 入口 — 配置不全时的响应', () => {
     VAPID_EMAIL: 'mailto:a@b.c',
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
+    AMSG_SERVER_TOKEN: 'shared-secret',
     DB: { prepare: () => {} },
   } as any;
 
   const call = (url: string, init: RequestInit = {}, env: any = brokenEnv) =>
-    (worker as any).fetch(new Request(url, init), env, { waitUntil: () => {} });
+    (worker as any).fetch(new Request(url, {
+      ...init,
+      headers: {
+        ...(env.AMSG_SERVER_TOKEN ? { 'X-Client-Token': env.AMSG_SERVER_TOKEN } : {}),
+        ...(init.headers as Record<string, string> || {}),
+      },
+    }), env, { waitUntil: () => {} });
 
   it('回明确的 WORKER_CONFIG_MISSING，而不是笼统的「服务器内部错误」', async () => {
     const response = await call('https://w.example/messages');
     expect(response.status).toBe(503);
     const body = await response.json();
     expect(body.error.code).toBe('WORKER_CONFIG_MISSING');
-    expect(body.error.missing).toEqual(['DB', 'AMSG_MASTER_KEY']);
+    expect(body.error.missing).toEqual(['DB', 'AMSG_MASTER_KEY', 'AMSG_SERVER_TOKEN']);
   });
 
   it('这个响应必须带 CORS 头，否则浏览器不让前端读，又变回 "Failed to fetch"', async () => {
@@ -3808,7 +3815,7 @@ describe('worker 入口 — 配置不全时的响应', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data.ok).toBe(false);
-    expect(body.data.missing).toEqual(['DB', 'AMSG_MASTER_KEY']);
+    expect(body.data.missing).toEqual(['DB', 'AMSG_MASTER_KEY', 'AMSG_SERVER_TOKEN']);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
@@ -3928,7 +3935,9 @@ describe('/debug — 只读诊断', () => {
   } as any);
 
   const debug = async (db: unknown) => {
-    const response = await (worker as any).fetch(new Request('https://w.example/debug'), envWith(db));
+    const response = await (worker as any).fetch(new Request('https://w.example/debug', {
+      headers: { 'X-Client-Token': 'shared-secret' },
+    }), envWith(db));
     return (await response.json()).data;
   };
 
@@ -4762,11 +4771,18 @@ describe('即时对话的接线', () => {
     VAPID_EMAIL: 'mailto:a@b.c',
     VAPID_PUBLIC_KEY: 'pub',
     VAPID_PRIVATE_KEY: 'priv',
+    AMSG_SERVER_TOKEN: 'shared-secret',
     DB: { prepare: () => {} },
   } as any;
 
   const call = (url: string, init: RequestInit = {}, env: any = fullEnv) =>
-    (worker as any).fetch(new Request(url, init), env, { waitUntil: () => {} });
+    (worker as any).fetch(new Request(url, {
+      ...init,
+      headers: {
+        'X-Client-Token': env.AMSG_SERVER_TOKEN || '',
+        ...(init.headers as Record<string, string> || {}),
+      },
+    }), env, { waitUntil: () => {} });
 
   it('/config-check 带包装层能力标志（设置页拿它当唯一的版本门槛）', async () => {
     const response = await call('https://w.example/config-check');
@@ -4790,43 +4806,21 @@ describe('即时对话的接线', () => {
     expect(typeof body.data.workerVersion).toBe('string');
   });
 
-  it('/config-check 报自更新能力：配了 CF_API_TOKEN 才算有，检查过没有从诊断表读', async () => {
+  it('/config-check 永远把私有版自更新标记为关闭，即使误配 CF_API_TOKEN', async () => {
     const without = await (await call('https://w.example/config-check')).json();
     expect(without.data.selfUpdate).toEqual({ supported: false, state: null });
     const withToken = { ...fullEnv, CF_API_TOKEN: 'cf' };
     const body = await (await call('https://w.example/config-check', {}, withToken)).json();
-    expect(body.data.selfUpdate.supported).toBe(true);
-    // 桩出来的 DB 读不了诊断表 → 从没查过
-    expect(body.data.selfUpdate.state).toBeNull();
+    expect(body.data.selfUpdate).toEqual({ supported: false, state: null });
   });
 
-  describe('/self-update/check（冷启动顺手问一句该更新了没）', () => {
-    const checkEnv = { ...fullEnv, AMSG_SERVER_TOKEN: 'shared', CF_API_TOKEN: 'cf', CF_SCRIPT_NAME: 'w' };
-    const post = (env: any, headers: Record<string, string> = { 'X-Client-Token': 'shared' }, ctx?: any) =>
-      (worker as any).fetch(new Request('https://w.example/self-update/check', { method: 'POST', headers }), env, ctx ?? { waitUntil: () => {} });
-
-    it('门跟 /self-update 一样高：共享密钥对不上 401、没配 CF_API_TOKEN 400', async () => {
-      expect((await post(checkEnv, { 'X-Client-Token': 'wrong' })).status).toBe(401);
-      expect((await post({ ...checkEnv, AMSG_SERVER_TOKEN: undefined })).status).toBe(401);
-      const noToken = await post({ ...checkEnv, CF_API_TOKEN: undefined });
-      expect(noToken.status).toBe(400);
-      expect((await noToken.json()).error.code).toBe('CF_TOKEN_MISSING');
-    });
-
-    it('过了门就回 202 走人，检查本身塞进 waitUntil 跑', async () => {
-      const waited: Promise<unknown>[] = [];
-      const response = await post(checkEnv, undefined, { waitUntil: (p: Promise<unknown>) => waited.push(p) });
-      expect(response.status).toBe(202);
-      expect((await response.json()).data.accepted).toBe(true);
-      expect(waited).toHaveLength(1);
-      // 桩 DB 上跑不动，但必须吞掉而不是让 waitUntil 里的 promise 拒绝
-      await expect(waited[0]).resolves.toBeUndefined();
-    });
-
-    it('预检要放行，否则带自定义头的正式请求根本发不出去', async () => {
-      const response = await (worker as any).fetch(new Request('https://w.example/self-update/check', { method: 'OPTIONS' }), checkEnv);
-      expect(response.status).toBe(204);
-    });
+  it('私有版禁用全部自更新入口，包括误配 CF_API_TOKEN 的情况', async () => {
+    const enabledCloudflareToken = { ...fullEnv, CF_API_TOKEN: 'cf', CF_SCRIPT_NAME: 'w' };
+    for (const endpoint of ['/self-update', '/self-update/check']) {
+      const response = await call('https://w.example' + endpoint, { method: 'POST' }, enabledCloudflareToken);
+      expect(response.status).toBe(404);
+      expect((await response.json()).error.code).toBe('SELF_UPDATE_DISABLED');
+    }
   });
 
   it('/config-check 绑定在就是 true', async () => {
