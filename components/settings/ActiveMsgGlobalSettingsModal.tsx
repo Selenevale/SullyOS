@@ -146,7 +146,10 @@ const REQUIRED_WORKER_VERSION = '2.6.0-next.33';
 const WORKER_VERSION_LAG_ACK = '2.6.0-next.36';
 
 /** 装着打包好的 worker 代码的部署仓库：fork 它 → 在 Cloudflare 连上 → 以后点 Sync fork 更新。 */
-const WORKERS_REPO_URL = 'https://github.com/Tosd0/sullyos-workers';
+const WORKERS_REPO_URL = 'https://github.com/Selenevale/SullyOS/tree/hardening-v1/worker/amsg';
+// This fork requires reviewed, manual Cloudflare deployment. Do not ask for
+// Cloudflare API account-management tokens inside the browser settings UI.
+const PRIVATE_BASELINE = true;
 const SETUP_WALKTHROUGH_URL = 'https://github.com/qegj567-cloud/SullyOS/blob/master/docs/amsg2-setup-walkthrough.md';
 /** 一键部署要的那枚 API Token 在这里建。 */
 const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
@@ -558,6 +561,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * secret 写进用户自己的 Worker 了（以后「更新后端」用的就是它）。
    */
   const handleOneClickDeploy = async (accountId?: string) => {
+    if (PRIVATE_BASELINE) {
+      addToast('私有版只允许在 Cloudflare 后台手动部署，请勿在网页输入 Cloudflare 管理 Token。', 'info');
+      return;
+    }
     const token = cfToken.trim();
     if (!token) {
       addToast('先把 Cloudflare API Token 填进来。', 'error');
@@ -707,6 +714,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   const autoUpdateText = describeAmsgSelfUpdate(workerVersion?.autoUpdate ?? null);
 
   const handleSelfUpdateWorker = async () => {
+    if (PRIVATE_BASELINE) {
+      addToast('私有版已关闭 Worker 自更新。请先审核 hardening-v1 代码，再手动发布新版。', 'info');
+      return;
+    }
     setLoading(true);
     try {
       const result = await ActiveMsgClient.selfUpdateWorker();
@@ -747,6 +758,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * 走 GitHub 的 Sync fork 重新部署会按 wrangler.toml 把 cron 加回来，所以这不是永久开关。
    */
   const applyCronTrigger = async (enabled: boolean) => {
+    if (PRIVATE_BASELINE) {
+      addToast('请在 Cloudflare Dashboard 手动管理 Cron Trigger，无须给 Worker 管理员 Token。', 'info');
+      return;
+    }
     setPauseConfirmOpen(false);
     setLoading(true);
     const action = enabled ? 'resume' : 'pause';
@@ -789,6 +804,10 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
    * 用户，前端手里根本没有他们的 Master Key，走重传那条路会把密钥抹掉。
    */
   const handleAttachUpdateKey = async (accountId?: string) => {
+    if (PRIVATE_BASELINE) {
+      addToast('私有版不允许把 Cloudflare API Token 交给糯米机或写入 Worker。', 'info');
+      return;
+    }
     const token = attachToken.trim();
     if (!token) {
       addToast('先把 Cloudflare API Token 填进来。', 'error');
@@ -1091,7 +1110,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         ) : null}
 
         {/* 已经填了 Worker 地址就说明后端装好了，这张卡收起来；重装走「清掉地址再回来」这条路。 */}
-        {config.workerUrl?.trim() ? null : (
+        {!PRIVATE_BASELINE && !config.workerUrl?.trim() ? (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <span className="font-bold text-slate-700">一键部署（推荐）</span>
@@ -1188,6 +1207,29 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         </div>
         )}
 
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+          <p className="font-bold text-slate-700">私有版 · 手动部署主动消息 Worker</p>
+          <p className="text-xs leading-relaxed text-slate-500">
+            为保护你的角色资料，这一版不接收 Cloudflare 管理 Token，也不自动安装外部更新包。
+            在 Cloudflare 后台从我们自己的 hardening-v1 分支审核、构建并手动发布后端。
+          </p>
+          <ol className="text-xs leading-relaxed text-slate-500 list-decimal list-outside pl-4 space-y-1">
+            <li>先部署自己的 Pages 网页，确认实际 https://xxx.pages.dev 地址。</li>
+            <li>从 hardening-v1 的 worker/amsg 源码构建并手动部署 AMSG Worker，绑定 D1 数据库 DB，配置每分钟执行的 Cron Trigger。</li>
+            <li>在 Worker 的 Variables and Secrets 中配置 AMSG_MASTER_KEY、AMSG_SERVER_TOKEN（均为 Secret）、AMSG_ALLOWED_ORIGIN（精确的 Pages 网页地址），再配置相应推送凭据。</li>
+            <li>把 AMSG Worker 地址和相同的专用访问密码填到下面，点「连接并启用」检查。</li>
+          </ol>
+          <p className="text-[11px] leading-relaxed text-amber-700">
+            不要把 Cloudflare API Token 填进糯米机、GitHub 仓库或公开网页；也不要对私有分支直接执行 Sync fork。
+            Cloudflare 部署和浏览器推送尚须实际测试。
+          </p>
+          <a href={WORKERS_REPO_URL} target="_blank" rel="noreferrer"
+            className="inline-block text-xs font-bold text-violet-600 underline">
+            查看我们的 AMSG 源码
+          </a>
+        </div>
+
+        {!PRIVATE_BASELINE && (
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <button
             type="button"
@@ -1373,6 +1415,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             </div>
           ) : null}
         </div>
+        )}
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
@@ -1385,9 +1428,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           {workerOutdated ? (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-xs leading-relaxed text-amber-700">
               Worker 上跑的还是旧版代码，缺少新特性（大上下文云端存储、服务端工具循环等）。
-              回你 fork 的 <code className="font-mono">sullyos-workers</code> 仓库点一下
-              <strong> Sync fork</strong>，CF 会自动重新部署（当初是手动粘贴部署的话，
-              去下方「部署 Worker」里重新复制一次代码粘贴覆盖）。已有数据和任务不受影响。
+              请先审核我们 hardening-v1 分支的新版代码，再从 Cloudflare 后台手动部署。
+              更新完成后点击「重新连接并验证」检查数据库和版本，不要直接 Sync fork。
             </div>
           ) : null}
 
@@ -1471,14 +1513,14 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
 
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
-              共享密钥（可选）
+              专用访问密码（必填，与 Worker 的 AMSG_SERVER_TOKEN 一致）
             </label>
             <div className="flex gap-2">
               <input
                 type="password"
                 value={config.serverToken || ''}
                 onChange={(event) => patchConfig({ serverToken: event.target.value })}
-                placeholder="worker 配了 AMSG_SERVER_TOKEN 才需要填"
+                placeholder="填写 Worker 中设置的 AMSG_SERVER_TOKEN"
                 className="flex-1 bg-white/70 border border-slate-200 rounded-2xl px-4 py-3 text-sm"
               />
               <button
@@ -1516,60 +1558,17 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
 
           {isConnected ? (
             <div className="pt-1 space-y-2 border-t border-slate-200">
-              {/*
-                按钮常驻，但有更新时才抢眼：有新版就实心高亮并写明更新到哪一版，
-                没新版时弱化成一行浅色的「重新检查并更新」——想手动重跑一次的人照样点得到，
-                不用为了这个去别处找入口。
-              */}
-              <button
-                onClick={handleSelfUpdateWorker}
-                disabled={loading}
-                className={`w-full py-2.5 font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50 ${
-                  workerVersion?.state === 'outdated'
-                    ? 'bg-emerald-600 text-white border border-emerald-600'
-                    : 'bg-white border border-slate-300 text-slate-700'
-                }`}
-              >
-                {loading
-                  ? '处理中...'
-                  : workerVersion?.state === 'outdated'
-                    ? `更新 Worker 到 ${workerVersion.expected}`
-                    : '重新检查并更新 Worker'}
-              </button>
-              {workerVersion?.state === 'outdated' ? (
-                <p className="text-xs leading-relaxed text-emerald-700">
-                  你这台 Worker 上跑的是
-                  {workerVersion.deployed ? <code className="font-mono"> {workerVersion.deployed} </code> : '更早的版本'}
-                  ，更新后即时对话才走得上新的生成通道。
-                </p>
-              ) : workerVersion?.state === 'current' ? (
-                <p className="text-xs leading-relaxed text-slate-500">
-                  后端已经是最新版（<code className="font-mono">{workerVersion.expected}</code>）。
-                </p>
-              ) : null}
-              {/*
-                装了钥匙的（一键部署、或补过钥匙）后端会自己定期查新代码，这里报它的近况；
-                没钥匙的沿用原来那段说明。文案出自 describeAmsgSelfUpdate，跟 worker 记的状态同源。
-              */}
-              {autoUpdateText ? (
-                <p className={`text-xs leading-relaxed ${workerVersion?.autoUpdate?.state?.lastOutcome === 'failed' ? 'text-amber-700' : 'text-slate-500'}`}>
-                  {autoUpdateText}
-                </p>
-              ) : null}
-              <p className="text-xs leading-relaxed text-slate-500">
-                后端自己去取最新代码覆盖自己，你排好的任务和填过的密钥都不动，更新完会自动验证一次。
-                {autoUpdateText
-                  ? '平时不用管，想立刻更新就点上面这颗。'
-                  : '用一键部署装的可以直接点，装完以后后端还会自己定期更新；老办法装的第一次点会提示补一把钥匙，就在下面补，补完同样自动更新。'}
-              </p>
-              {selfUpdateHash ? (
-                <p className="text-xs leading-relaxed text-emerald-600">
-                  当前后端代码指纹：<code className="font-mono">{selfUpdateHash}</code>
-                </p>
-              ) : null}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2 text-xs leading-relaxed text-slate-600">
+                <p className="font-bold">私有版不支持在网页里自动更新 Worker</p>
+                <p>需要升级时，先审核 hardening-v1 代码，再到 Cloudflare 后台手动发布，之后点击上方「重新连接并验证」。</p>
+                {workerVersion?.state === 'outdated' ? (
+                  <p className="text-amber-700">当前后端版本可能较旧，请按审核后手动发布的流程处理。</p>
+                ) : null}
+                <a href={WORKERS_REPO_URL} target="_blank" rel="noreferrer" className="font-bold text-violet-600 underline">查看我们的后端源码</a>
+              </div>
 
               {/* 暂停 / 恢复后台任务：摘掉或加回 Worker 的 cron trigger。旧版 Worker 没这个端点时整块不显示。 */}
-              {cronState ? (
+              {!PRIVATE_BASELINE && cronState ? (
                 <>
                   <button
                     onClick={handleCronTriggerClick}
@@ -1592,7 +1591,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                 </>
               ) : null}
 
-              {attachOpen ? (
+              {!PRIVATE_BASELINE && attachOpen ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
                   <p className="text-[11px] font-bold text-slate-600">给这台后端补一把更新用的钥匙</p>
                   <p className="text-[11px] leading-relaxed text-slate-500">
@@ -1787,8 +1786,9 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
                 </div>
               </div>
               <p className="text-[11px] leading-relaxed text-slate-500">
-                Worker 侧的环境变量清单见上面「部署 Worker」一节。发布的 Worker 代码默认 CORS 全开
-                （<code className="font-mono">origin: '*'</code>），想收紧就把它改成自己站点的域名再部署。
+                主动消息 Worker 必须配置 <code className="font-mono">AMSG_ALLOWED_ORIGIN</code>，
+                值为自己的 Pages 网站完整来源；没有正确设置就不会对浏览器提供私人服务。
+                其它服务也必须使用对应的专用访问密码。
               </p>
               {onOpenCloudData ? (
                 <div className="bg-white border border-slate-200 rounded-2xl p-3 space-y-2">
