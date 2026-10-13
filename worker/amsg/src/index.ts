@@ -205,6 +205,8 @@ interface Env extends NativeFcmEnv {
   VAPID_PRIVATE_KEY: string;
   /** Private baseline requires a dedicated secret; missing token fails closed. */
   AMSG_SERVER_TOKEN?: string;
+  /** Exact website origin allowed to access this private Worker. */
+  AMSG_ALLOWED_ORIGIN?: string;
   /**
    * 排查「模型这轮没说话」时临时打开：填 1 后，跳过诊断日志（[amsg:skip-diag]）会带上模型回复的
    * 原文片段。默认只记形状、不含聊天正文，查完删掉。见 ./skipDiagnostics。
@@ -2863,11 +2865,9 @@ export const buildWorkerConfig = (env: Env) => {
     vapid: effectiveVapid,
     webpush,
     // 前端和 Worker 不同源，带自定义头的请求会先发 CORS 预检，必须放行。
-    // Browser CORS allowlisting is a separate pre-deployment requirement;
-    // the private baseline rejects unauthenticated API calls even if CORS is permissive.
-    // allowHeaders 显式给：上游默认那份不含 Content-Encoding，而 gzip 上行要用它
-    // （见 CORS_ALLOW_HEADERS 那段注释）。
-    cors: { origin: '*', allowHeaders: CORS_ALLOW_HEADERS },
+    // Upstream and wrapper must share the same explicit browser origin.
+    // CORS is not API authentication; X-Client-Token is still required.
+    cors: { origin: resolveAmsgAllowedOrigin(env) || 'https://blocked.invalid', allowHeaders: CORS_ALLOW_HEADERS },
     // 一次性 job 输入的过期清理（amsg-server 2.6.0-next.21+）：cron 每跳顺手把这个
     // 命名空间下超过天数没更新的条目清掉。角色状态那个命名空间（amsg:char:<id>，
     // 装 fire_pack / tool_pack）不配 TTL——那些是要长期留着的，配了就等于定时把
@@ -2948,6 +2948,12 @@ const REQUIRED_ENV = [
     how: '在 Settings → Variables and Secrets 中设置为 Secret；建议生成至少 32 字节的随机值，不要提交到 GitHub',
     isMissing: (env: Env) => !env.AMSG_SERVER_TOKEN?.trim(),
   },
+  {
+    key: 'AMSG_ALLOWED_ORIGIN',
+    label: 'AMSG_ALLOWED_ORIGIN',
+    how: '在 Variables and Secrets 填完整网页来源，例如 https://my-site.pages.dev（不含路径、星号或末尾斜线）',
+    isMissing: (env: Env) => !isValidAmsgOrigin(env.AMSG_ALLOWED_ORIGIN),
+  },
 ] as const;
 
 /**
@@ -3015,17 +3021,43 @@ const CORS_ALLOW_HEADERS =
   'Content-Type, Content-Encoding, X-User-Id, X-Payload-Encrypted, X-Encryption-Version, '
   + 'X-Response-Encrypted, X-Client-Token';
 
+/** Require a single explicit origin: no wildcard, path, or credential URL. */
+export const isValidAmsgOrigin = (origin: unknown): origin is string => {
+  if (typeof origin !== 'string' || !origin || origin !== origin.trim()) return false;
+  try {
+    const url = new URL(origin);
+    const dev = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !dev) return false;
+    return !url.username && !url.password && url.origin === origin &&
+      url.pathname === '/' && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+};
+
+const resolveAmsgAllowedOrigin = (env: Env): string | null =>
+  isValidAmsgOrigin(env.AMSG_ALLOWED_ORIGIN) ? env.AMSG_ALLOWED_ORIGIN : null;
+
 const CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': CORS_ALLOW_HEADERS,
   'Access-Control-Max-Age': '86400',
+  'Vary': 'Origin',
 };
 
-const jsonWithCors = (status: number, body: unknown): Response =>
+const corsHeadersFor = (request: Request, env: Env): Record<string, string> => {
+  const origin = request.headers.get('Origin');
+  const allowed = resolveAmsgAllowedOrigin(env);
+  return {
+    ...CORS_HEADERS,
+    ...(origin && allowed && origin === allowed ? { 'Access-Control-Allow-Origin': allowed } : {}),
+  };
+};
+
+const makeJsonWithCors = (status: number, body: unknown, headers: Record<string, string>): Response =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...CORS_HEADERS },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers },
   });
 
 // cron 触发时 CF 传进来的事件，只往上游转手，没必要为它引 workers-types。
@@ -3401,9 +3433,18 @@ export default {
   async fetch(request: Request, env: Env, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
+    const corsHeaders = corsHeadersFor(request, env);
+    const jsonWithCors = (status: number, body: unknown) => makeJsonWithCors(status, body, corsHeaders);
+    const origin = request.headers.get('Origin');
+    if (origin && origin !== resolveAmsgAllowedOrigin(env)) {
+      return makeJsonWithCors(403, {
+        success: false,
+        error: { code: 'ORIGIN_NOT_ALLOWED', message: '此网页未获准连接主动消息服务器。' },
+      }, corsHeaders);
+    }
 
     if (pathname.endsWith('/config-check')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       // 刻意不校验 X-Client-Token：worker 配了口令而前端没填正是要诊断的情形之一，
       // 校验了就查不出来。作为交换，这里只回「配没配」，不回任何值。
       //
@@ -3454,7 +3495,7 @@ export default {
     // configuration AND a valid client token before any state is read/written.
     const report = inspectWorkerEnv(env);
     if (!report.ok) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       return jsonWithCors(503, {
         success: false,
         error: { code: 'WORKER_CONFIG_MISSING', message: report.message, missing: report.missing },
@@ -3471,7 +3512,7 @@ export default {
     }
 
     if (pathname.endsWith('/debug')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       // 全只读、也不设防，所以能报什么是有边界的：只有配置齐不齐、schema 对不对、
       // 数出来的条数，以及本来就公开的 VAPID 公钥。密钥的值、用户标识、任务正文、
       // 推送 endpoint 一概不出现——不是没取到，是刻意不取。
@@ -3492,7 +3533,7 @@ export default {
     }
 
     if (pathname.endsWith('/cron-trigger')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       // 跟 /self-update 一样排在配置门之前，也一样自己校验共享密钥、不吃这道门的豁免。
       // 认证没过回 401；「读不到 / 改不了」是 Worker 自己的配置问题，读时当状态报（200）、
       // 改时当失败报（400）。
@@ -3536,7 +3577,7 @@ export default {
     // 跟 /debug 不一样，这里会回报错原文和角色名，所以跟上游其它端点同一道门：
     // 配了共享密钥就必须带对。
     if (pathname.endsWith('/tick-report')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       if (method !== 'GET') {
         return jsonWithCors(405, {
           success: false,
@@ -3570,7 +3611,7 @@ export default {
     // 即时对话：一个请求把「传云端状态 + 建任务」串完，回 202 之后立刻起一跳。
     // 排在配置门之后，所以走到这里 D1 和密钥必然都在。
     if (pathname.endsWith('/instant-chat')) {
-      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
       if (method !== 'POST') {
         return jsonWithCors(405, {
           success: false,
