@@ -15,6 +15,15 @@ export const verifyPrivateAmsgBundle = (bundle, label = 'AMSG Worker bundle') =>
     ['fail-closed proxy default', 'https://proxy.invalid'],
     ['disabled missing-origin fallback', 'https://blocked.invalid'],
   ];
+  // String markers alone could be present in comments or dead branches.
+  // Require the real compiled, non-minified checks as well.
+  const requiredCode = [
+    ['origin must be configured', /isMissing:\s*\(env\)\s*=>\s*!isValidAmsgOrigin\(env\.AMSG_ALLOWED_ORIGIN\)/],
+    ['reject wrong browser origins', /origin\s*&&\s*origin\s*!==\s*resolveAmsgAllowedOrigin\(env\)/],
+    ['compare the client token', /constantTimeEqual\(supplied,\s*env\.AMSG_SERVER_TOKEN\.trim\(\)\)/],
+    ['upstream uses the allowed origin', /cors:\s*\{\s*origin:\s*resolveAmsgAllowedOrigin\(env\)\s*\|\|\s*["']https:\/\/blocked\.invalid/],
+    ['default proxy is fail closed', /DEFAULT_PROXY_WORKER\s*=\s*["']https:\/\/proxy\.invalid["']/],
+  ];
   const forbidden = [
     ['old public proxy as the default', /DEFAULT_PROXY_WORKER\s*=\s*["']https:\/\/proxy\.friedsully\.com["']/],
     ['old autonomous updater', /\brunAutoUpdate\s*\(/],
@@ -23,6 +32,9 @@ export const verifyPrivateAmsgBundle = (bundle, label = 'AMSG Worker bundle') =>
   const errors = [];
   for (const [description, marker] of required) {
     if (!bundle.includes(marker)) errors.push('Missing: ' + description);
+  }
+  for (const [description, pattern] of requiredCode) {
+    if (!pattern.test(bundle)) errors.push('Missing check: ' + description);
   }
   for (const [description, pattern] of forbidden) {
     if (pattern.test(bundle)) errors.push('Unsafe: ' + description);
