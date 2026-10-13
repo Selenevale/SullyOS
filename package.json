@@ -13,6 +13,7 @@
     "build:workers": "node scripts/build-workers.mjs",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:private-artifact": "node --test scripts/verify-private-amsg-bundle.test.mjs",
     "wardrobe:check": "node art/chibi/check-wardrobe.mjs",
     "build:chat-preview": "node scripts/build-chat-preview-css.mjs"
   },
