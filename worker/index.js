@@ -2448,7 +2448,9 @@ export default {
           hint: 'Use a disposable test cookie; the normal Lite path never calls this endpoint.',
         }, { status: 403, origin });
       }
-      const cookie = request.headers.get('x-xhs-cookie') || body.cookie || (env && env.XHS_COOKIE) || '';
+      // Never use a Worker-wide login cookie: unauthenticated callers could otherwise
+      // use the owner's platform session. Only accept credentials from this request.
+      const cookie = request.headers.get('x-xhs-cookie') || body.cookie || '';
       if (!cookie) return jsonResponse({ error: '未配置 cookie。请在 SullyOS 设置里粘贴小红书 cookie。' }, { status: 401, origin });
       if (!cookie.includes('a1=')) return jsonResponse({ error: 'cookie 缺少 a1 字段，请复制完整的小红书 cookie。' }, { status: 400, origin });
       try {
@@ -2545,7 +2547,7 @@ export default {
       } catch (e) {
         return jsonResponse({
           error: `Proxy error: ${String(e && e.message || e)}`,
-          stack: String(e && e.stack || '').slice(0, 400),
+          // Avoid exposing internal stack traces from credential relay failures.
         }, { status: 502, origin });
       }
     }
@@ -2758,9 +2760,11 @@ export default {
           method: ghMethod,
           headers: ghHeaders,
           body: ghBody,
-          redirect: 'follow',
+          // Do not let a redirect forward the caller's GitHub token.
+          // Download redirects need a separate credential-free follow-up.
+          redirect: 'manual',
         });
-        console.log('github', ghMethod, targetUrl, '→', ghUpstream.status);
+        console.log('github', ghMethod, parsedGh.hostname, '→', ghUpstream.status);
         const ghRespHeaders = new Headers(corsHeaders(origin));
         const ghForwardedResponseHeaders = [
           'Content-Type', 'Content-Length', 'Content-Range', 'Retry-After',
@@ -2779,7 +2783,7 @@ export default {
       } catch (e) {
         return jsonResponse({
           error: `Proxy error: ${String(e && e.message || e)}`,
-          stack: String(e && e.stack || '').slice(0, 400),
+          // Avoid exposing internal stack traces from credential relay failures.
         }, { status: 502, origin });
       }
     }
@@ -2990,6 +2994,14 @@ export default {
 
     // ========== 小红书代理 ==========
     if (url.pathname.startsWith('/xhs/')) {
+      // Diagnostics can expose account details and temporary upload permits.
+      // Keep them off until explicitly enabled for troubleshooting.
+      if (
+        (url.pathname === '/xhs/debug' || url.pathname === '/xhs/upload-test')
+        && env?.PROXY_ENABLE_XHS_DIAGNOSTICS !== '1'
+      ) {
+        return jsonResponse({ error: 'XHS diagnostics disabled' }, { status: 404, origin });
+      }
       const cookie = request.headers.get("X-Xhs-Cookie");
       if (!cookie) {
         return jsonResponse({ error: "Missing header: X-Xhs-Cookie" }, { status: 401, origin });
@@ -3029,7 +3041,8 @@ export default {
               success: true,
               message: '上传凭证获取成功',
               file_id: tempPermit.fileIds[0],
-              token_prefix: tempPermit.token.slice(0, 30) + '...',
+              // Never return even a prefix of an upload credential.
+              token_present: true,
               debug: credResult.debug
             }, { origin });
           }
