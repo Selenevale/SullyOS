@@ -12,6 +12,11 @@
 AMSG_MASTER_KEY=
 AMSG_SERVER_TOKEN=
 AMSG_ALLOWED_ORIGIN=
+# 仅云端 fire-time 工具需要：绑定到自己部署的主代理源，不准写入 tool_config。
+# PROXY_SERVER_TOKEN 在 AMSG 和主代理两台 Worker 的 Cloudflare Secrets 中配置相同值，
+# 但绝不与 AMSG_SERVER_TOKEN 共用，也不要提交真实值。
+PROXY_WORKER_ORIGIN=
+PROXY_SERVER_TOKEN=
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_EMAIL=
