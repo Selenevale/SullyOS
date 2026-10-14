@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { __xhsLiteTest } from '../index.js';
 
 const COOKIE = `a1=${'a'.repeat(52)}; web_session=test-session`;
+// A valid fake proxy bearer is required before XHS Lite's own routing and
+// session-risk rules can run; never disable production authentication.
+const PROXY_TEST_TOKEN = 'xhs-lite-proxy-test-only-do-not-use-in-production-123456789';
 
 const callLite = (
   command: string,
@@ -17,12 +20,13 @@ const callLite = (
       headers: {
         'content-type': 'application/json',
         'x-xhs-cookie': COOKIE,
+        'X-Proxy-Token': PROXY_TEST_TOKEN,
         ...(rnoteApiKey ? { 'x-rnote-api-key': rnoteApiKey } : {}),
         ...(platform && platform !== 'auto' ? { 'x-xhs-platform': platform } : {}),
       },
       body: JSON.stringify(body),
     }),
-    env,
+    { PROXY_SERVER_TOKEN: PROXY_TEST_TOKEN, ...env },
     { waitUntil() {} },
   );
 const callExperiment = (
@@ -36,11 +40,12 @@ const callExperiment = (
         'content-type': 'application/json',
         'x-xhs-cookie': COOKIE,
         'x-xhs-platform': 'xhs',
+        'X-Proxy-Token': PROXY_TEST_TOKEN,
         ...(ack ? { 'x-xhs-experiment-ack': ack } : {}),
       },
       body: JSON.stringify(body),
     }),
-    {},
+    { PROXY_SERVER_TOKEN: PROXY_TEST_TOKEN },
     { waitUntil() {} },
   );
 
@@ -49,6 +54,19 @@ afterEach(() => {
   vi.restoreAllMocks();
   __xhsLiteTest.spiderV3.resetDslCache();
   __xhsLiteTest.spiderV3.resetPlatformCache();
+});
+
+describe('XHS Lite private proxy access', () => {
+  it('blocks an XHS command without X-Proxy-Token before any upstream call', async () => {
+    const upstream = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('must not reach upstream'));
+    const response = await worker.fetch(new Request('https://local.test/api/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-xhs-cookie': COOKIE },
+      body: JSON.stringify({ keyword: 'private-query' }),
+    }), { PROXY_SERVER_TOKEN: PROXY_TEST_TOKEN }, { waitUntil() {} });
+    expect(response.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+  });
 });
 
 describe('XHS Lite mainland / RedNote platform routing', () => {
