@@ -1205,7 +1205,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             以后「更新后端」用的就是它；本页不保存。介意的话可以照下面的手动方式装。
           </p>
         </div>
-        )}
+        ) : null}
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <p className="font-bold text-slate-700">私有版 · 手动部署主动消息 Worker</p>
