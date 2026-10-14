@@ -143,6 +143,34 @@ describe('buildToolConfig / parseToolConfig', () => {
     expect(on.xhsMcpConfig?.cookie).toBe('xhs-cookie');
   });
 
+  it('读取旧版云端状态时，也丢弃已关闭功能的历史密钥', () => {
+    const old = JSON.stringify({
+      v: 1, proxyWorkerUrl: 'https://proxy.invalid',
+      weatherEnabled: false, weatherApiKey: 'old-weather-key', weatherCity: 'old-city',
+      newsEnabled: false, newsApiKey: 'old-news-key', newsPlatforms: ['old-platform'],
+      notionEnabled: false, notionApiKey: 'old-notion-key', notionDatabaseId: 'old-notion-db',
+      notionNotesDatabaseId: 'old-notion-notes',
+      feishuEnabled: false, feishuAppId: 'old-feishu-id',
+      feishuAppSecret: 'old-feishu-secret', feishuBaseId: 'old-base', feishuTableId: 'old-table',
+      xhsMcpConfig: { enabled: false, serverUrl: 'https://xhs.example', cookie: 'old-cookie' },
+      userHolidays: { enabled: false, birthday: 'old-birthday' },
+    });
+    const decoded = parseToolConfig(old);
+    expect(decoded).not.toBeNull();
+    const serialized = JSON.stringify(decoded);
+    for (const secret of [
+      'old-weather-key', 'old-city', 'old-news-key', 'old-platform',
+      'old-notion-key', 'old-notion-db', 'old-notion-notes',
+      'old-feishu-id', 'old-feishu-secret', 'old-base', 'old-table',
+      'old-cookie', 'old-birthday',
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+    expect(decoded).toMatchObject({
+      weatherEnabled: false, newsEnabled: false, notionEnabled: false, feishuEnabled: false,
+    });
+  });
+
   it('无 realtimeConfig 时出全禁用配置（而不是抛错）', () => {
     const config = buildToolConfig(undefined);
     expect(config.newsEnabled).toBe(false);
