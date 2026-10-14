@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+// @ts-expect-error standalone Worker entry is JS, not a typed module
 import proxyWorker from './index.js';
 
 const proxy = proxyWorker as {
