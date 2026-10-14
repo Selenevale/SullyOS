@@ -11,7 +11,7 @@
  * 构建期直接暴露。
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor } from './proxyWorker';
 
 export interface SearchResult {
     title: string;
@@ -60,7 +60,8 @@ export const performSearch = async (query: string, apiKey: string, signal?: Abor
             method: 'GET',
             headers: {
                 'Accept': 'application/json',
-                'X-Brave-API-Key': apiKey
+                'X-Brave-API-Key': apiKey,
+                ...proxyWorkerAuthHeadersFor(workerUrl)
             }
         });
 
@@ -132,7 +133,8 @@ export const notionGetDiaryByDate = async (
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Notion-API-Key': apiKey
+                'X-Notion-API-Key': apiKey,
+                ...proxyWorkerAuthHeadersFor(getProxyWorkerUrl())
             },
             body: JSON.stringify({
                 database_id: databaseId,
@@ -202,7 +204,8 @@ export const notionReadDiaryContent = async (
             signal,
             method: 'GET',
             headers: {
-                'X-Notion-API-Key': apiKey
+                'X-Notion-API-Key': apiKey,
+                ...proxyWorkerAuthHeadersFor(getProxyWorkerUrl())
             }
         });
 
@@ -253,7 +256,8 @@ export const notionSearchUserNotes = async (
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Notion-API-Key': apiKey
+                'X-Notion-API-Key': apiKey,
+                ...proxyWorkerAuthHeadersFor(getProxyWorkerUrl())
             },
             body: JSON.stringify({
                 database_id: notesDatabaseId,
@@ -382,7 +386,7 @@ export const feishuGetToken = async (appId: string, appSecret: string, signal?: 
         const response = await fetch(`${getProxyWorkerUrl()}/feishu/token`, {
             signal,
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...proxyWorkerAuthHeadersFor(getProxyWorkerUrl()) },
             body: JSON.stringify({ app_id: appId, app_secret: appSecret })
         });
 
@@ -442,7 +446,8 @@ export const feishuGetDiaryByDate = async (
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Feishu-Token': tokenResult.token
+                'X-Feishu-Token': tokenResult.token,
+                ...proxyWorkerAuthHeadersFor(getProxyWorkerUrl())
             },
             body: JSON.stringify({
                 filter: {
