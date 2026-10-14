@@ -45,6 +45,7 @@ vi.mock('./activeMsgStore', () => ({
 
 import { ActiveMsgClient } from './activeMsgClient';
 import { amsgStateNamespace } from './amsgFirePack';
+import { AMSG_GLOBAL_NAMESPACE } from './amsgToolPack';
 import { clearInstantChatPending } from './amsgInstantChat';
 import { forgetAllCredIds } from './amsgLlmCredentials';
 import { readStateClockWatermark, resetStateClock } from './amsgStateClock';
@@ -203,8 +204,17 @@ describe('即时对话撞上「云端拒收这轮状态」', () => {
     await send();
 
     reiClient.putClientState.mockClear();
+    // The original future fire_pack read is for the clock adjustment.
+    // After a successful tool_config upload, the authenticated global read
+    // must instead return the newly persisted row (not that fire_pack).
+    reiClient.getClientState.mockImplementationOnce(async (namespace: string) => {
+      expect(namespace).toBe(AMSG_GLOBAL_NAMESPACE);
+      const [entries] = reiClient.putClientState.mock.calls.at(-1)!;
+      return { success: true, data: { entries } };
+    });
     await ActiveMsgClient.syncToolConfig({} as any);
 
+    expect(reiClient.getClientState).toHaveBeenCalledWith(AMSG_GLOBAL_NAMESPACE);
     const [entries] = reiClient.putClientState.mock.calls.at(-1)!;
     expect(entries[0].updatedAt).toBeGreaterThan(FUTURE);
   });
