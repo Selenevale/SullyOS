@@ -191,6 +191,10 @@ describe('private proxy access-token origin isolation', () => {
     setProxyWorkerRuntimeAuth('https://wrong-proxy.example.com', 'cloud-secret');
     expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search')).toEqual({});
     setProxyWorkerRuntimeAuth('https://my-proxy.example.com', 'cloud-secret');
+    setProxyWorkerUrlOverride('https://attacker.example.com');
+    expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
+    expect(proxyWorkerAuthHeadersFor('https://attacker.example.com/search')).toEqual({});
+    setProxyWorkerUrlOverride('https://my-proxy.example.com');
     expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search'))
       .toEqual({ 'X-Proxy-Token': 'cloud-secret' });
     expect(proxyWorkerAuthHeadersFor('https://api.search.brave.com/search')).toEqual({});
