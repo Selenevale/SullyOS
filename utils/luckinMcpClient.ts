@@ -17,7 +17,7 @@
  * schema 后再按需收紧)。
  */
 
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor } from './proxyWorker';
 
 // 走中心配置的主代理 worker（用户可在设置里换成自部署实例）
 const mcpProxyUrl = (): string => `${getProxyWorkerUrl()}/mcp/luckin`;
@@ -162,6 +162,7 @@ const post = async (
         'Authorization': `Bearer ${token}`,
     };
     if (sessionId) headers['Mcp-Session-Id'] = sessionId;
+    Object.assign(headers, proxyWorkerAuthHeadersFor(mcpProxyUrl()));
 
     const resp = await fetch(mcpProxyUrl(), {
         signal,
