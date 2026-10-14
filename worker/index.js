@@ -26,7 +26,7 @@ function corsHeaders(origin) {
     ...(origin ? { "Access-Control-Allow-Origin": origin } : {}),
     "Vary": "Origin",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Proxy-Token, xi-api-key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Mcp-Session-Id, Accept, Range",
     "Access-Control-Expose-Headers": "Mcp-Session-Id",
     "Access-Control-Max-Age": "86400",
   };
@@ -2405,7 +2405,7 @@ const XHSLite = (() => {
 // 供 Node 验证用（Worker 运行时忽略多余的具名导出）。见 worker/xhs-lite/test/verify.mjs
 export const __xhsLiteTest = XHSLite.__test;
 
-export default {
+const proxyCore = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
@@ -4073,5 +4073,58 @@ export default {
     } catch (e) {
       return jsonResponse({ error: "Upstream fetch failed", detail: String(e) }, { status: 502, origin });
     }
+  },
+};
+
+
+// The CORS allowlist protects browser reads, not the Worker itself: curl
+// can omit/spoof Origin. Every business request must also supply the owner's
+// independent main-proxy Secret. Never forward X-Proxy-Token upstream.
+const proxyTokenMatches = (submitted, expected) => {
+  const enc = new TextEncoder();
+  const left = enc.encode(submitted);
+  const right = enc.encode(expected);
+  if (left.length > 4096 || right.length > 4096) return false;
+  let different = left.length ^ right.length;
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    different |= (left[index] || 0) ^ (right[index] || 0);
+  }
+  return different === 0;
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const origin = request.headers.get("Origin") || "";
+    // Preserve strict Origin enforcement before authentication: denied pages
+    // receive no permissive CORS header even if they present a valid bearer.
+    if (origin && !isAllowedBrowserOrigin(origin, env)) return proxyCore.fetch(request, env, ctx);
+    // Browser preflight has no credential; /api/health reveals no account data.
+    // The disabled /cf-api route likewise never forwards a privileged request.
+    if (request.method === "OPTIONS"
+      || (url.pathname === "/api/health" && request.method === "GET")
+      || url.pathname === "/cf-api" || url.pathname.startsWith("/cf-api/")) {
+      return proxyCore.fetch(request, env, ctx);
+    }
+
+    const configured = typeof env?.PROXY_SERVER_TOKEN === "string"
+      ? env.PROXY_SERVER_TOKEN.trim() : "";
+    // Require a high-entropy Secret in Worker configuration. It must never be
+    // served to browsers, baked into JS, shared with AMSG_SERVER_TOKEN or logged.
+    if (configured.length < 32) {
+      return jsonResponse({ error: "Private proxy authentication is not configured" }, { status: 503, origin });
+    }
+    const supplied = request.headers.get("X-Proxy-Token") || "";
+    if (!proxyTokenMatches(supplied, configured)) {
+      return jsonResponse({ error: "Private proxy authentication required" }, { status: 401, origin });
+    }
+    const response = await proxyCore.fetch(request, env, ctx);
+    // Fetch's automatic redirect handling can carry custom headers to another
+    // origin, and XHR cannot use redirect:'manual'. Never emit upstream 3xx
+    // responses to an authenticated browser client holding X-Proxy-Token.
+    if (response.status >= 300 && response.status < 400 && response.status !== 304) {
+      return jsonResponse({ error: "Upstream redirect not followed by private proxy" }, { status: 502, origin });
+    }
+    return response;
   },
 };
