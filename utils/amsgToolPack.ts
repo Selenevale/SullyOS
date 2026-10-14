@@ -204,6 +204,32 @@ export const parseToolConfig = (value: string): AmsgToolConfig | null => {
     ) {
       return null;
     }
+    // Defensive read for cloud rows written by OLDER clients: those versions
+    // could store API keys even when a tool was off. The upgraded client will
+    // replace the persistent row on its first successful privacy sync, but
+    // the Worker must not pass those disabled credentials to tools meanwhile.
+    if (parsed.weatherEnabled !== true) {
+      delete parsed.weatherApiKey;
+      delete parsed.weatherCity;
+    }
+    if (parsed.newsEnabled !== true) {
+      delete parsed.newsApiKey;
+      delete parsed.newsPlatforms;
+    }
+    if (parsed.notionEnabled !== true) {
+      delete parsed.notionApiKey;
+      delete parsed.notionDatabaseId;
+      delete parsed.notionNotesDatabaseId;
+    }
+    if (parsed.feishuEnabled !== true) {
+      delete parsed.feishuAppId;
+      delete parsed.feishuAppSecret;
+      delete parsed.feishuBaseId;
+      delete parsed.feishuTableId;
+    }
+    if (parsed.xhsMcpConfig?.enabled !== true) delete parsed.xhsMcpConfig;
+    if (parsed.userHolidays?.enabled !== true) delete parsed.userHolidays;
+
     // MCP 清单是列表，坏条目单独丢掉就行——整份判 null 会连搜索/Notion 凭据一起赔进去。
     const cleaned = Array.isArray(parsed.mcpServers)
       ? parsed.mcpServers.filter((s: any) =>
