@@ -13,6 +13,7 @@ import {
 import NeteaseProfilePage from './music/NeteaseProfilePage';
 import CharVisitPage from './music/CharVisitPage';
 import { shareOrDownloadBlob } from '../utils/shareExport';
+import { proxyWorkerAuthHeadersFor } from '../utils/proxyWorker';
 
 // ------------------------- 工具 -------------------------
 const fmtTime = (s: number) => {
@@ -527,7 +528,7 @@ const MusicApp: React.FC = () => {
                 lines.push(`Cookie: ${ck ? ck.slice(0, 18) + '...(' + ck.length + 'c)' : '(未填)'}`);
                 try {
                   const res = await fetch(`${effectiveWorkerUrl}/netease/search`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', ...(ck ? { 'X-Netease-Cookie': ck } : {}) },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', ...(ck ? { 'X-Netease-Cookie': ck } : {}), ...proxyWorkerAuthHeadersFor(`${effectiveWorkerUrl}/netease/search`) },
                     body: JSON.stringify({ keyword: '晴天', limit: 3 }),
                   });
                   lines.push(`HTTP ${res.status}`);
