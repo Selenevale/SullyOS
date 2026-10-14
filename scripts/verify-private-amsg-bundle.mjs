@@ -20,7 +20,7 @@ export const verifyPrivateAmsgBundle = (bundle, label = 'AMSG Worker bundle') =>
   const requiredCode = [
     ['origin must be configured', /isMissing:\s*\(env\)\s*=>\s*!isValidAmsgOrigin\(env\.AMSG_ALLOWED_ORIGIN\)/],
     ['reject wrong browser origins', /origin\s*&&\s*origin\s*!==\s*resolveAmsgAllowedOrigin\(env\)/],
-    ['compare the client token', /constantTimeEqual\(supplied,\s*env\.AMSG_SERVER_TOKEN\.trim\(\)\)/],
+    ['compare the client token', /constantTimeEqual\d*\(supplied,\s*env\.AMSG_SERVER_TOKEN\.trim\(\)\)/],
     ['upstream uses the allowed origin', /cors:\s*\{\s*origin:\s*resolveAmsgAllowedOrigin\(env\)\s*\|\|\s*["']https:\/\/blocked\.invalid/],
     ['default proxy is fail closed', /DEFAULT_PROXY_WORKER\s*=\s*["']https:\/\/proxy\.invalid["']/],
   ];
