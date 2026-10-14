@@ -16,7 +16,8 @@ describe('proxyWorker 中心配置', () => {
   afterEach(() => setProxyWorkerUrlOverride(null));
   it('旧公共域名迁移，保留路径查询串，自有地址不被误匹配', () => {
     localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu.cc/');
-    expect(getProxyWorkerUrl()).toBe('https://proxy.friedsully.com');
+    expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
+    expect(DEFAULT_PROXY_WORKER).toBe('https://proxy.invalid');
     expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu.cc/api?test=1')).toBe(`${DEFAULT_PROXY_WORKER}/api?test=1`);
     setProxyWorkerUrlOverride('https://sullymeow.ccwu.cc');
     expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
