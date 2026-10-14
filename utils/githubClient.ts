@@ -19,7 +19,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor } from './proxyWorker';
 
 const API_HOST = 'https://api.github.com';
 const UPLOAD_HOST = 'https://uploads.github.com';
@@ -253,6 +253,7 @@ const ghRequest = async (
         const headers: Record<string, string> = {
             ...baseHeaders,
             'X-GitHub-Method': method,
+            ...proxyWorkerAuthHeadersFor(proxify(fullUrl)),
         };
         const res = await fetch(proxify(fullUrl), {
             method: 'POST',
@@ -452,7 +453,10 @@ const uploadOneAsset = async (
                 Accept: 'application/vnd.github+json',
                 'Content-Type': contentType,
             };
-            if (shouldUseGithubProxy(config)) headers['X-GitHub-Method'] = 'POST';
+            if (shouldUseGithubProxy(config)) {
+                headers['X-GitHub-Method'] = 'POST';
+                Object.assign(headers, proxyWorkerAuthHeadersFor(targetUrl));
+            }
             const res = await fetch(targetUrl, {
                 method: 'POST',
                 headers,
@@ -497,7 +501,10 @@ const uploadOneAsset = async (
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.setRequestHeader('Accept', 'application/vnd.github+json');
         xhr.setRequestHeader('Content-Type', contentType);
-        if (shouldUseGithubProxy(config)) xhr.setRequestHeader('X-GitHub-Method', 'POST');
+        if (shouldUseGithubProxy(config)) {
+            xhr.setRequestHeader('X-GitHub-Method', 'POST');
+            for (const [name, value] of Object.entries(proxyWorkerAuthHeadersFor(targetUrl))) xhr.setRequestHeader(name, value);
+        }
         xhr.timeout = UPLOAD_TIMEOUT_MS;
         xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) onFraction?.(e.loaded / e.total);
