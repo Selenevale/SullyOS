@@ -3148,9 +3148,32 @@ export const ActiveMsgClient = {
   async syncToolConfig(realtimeConfig: RealtimeConfig | undefined): Promise<void> {
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
-    const response = await putCloudClientState(client, [buildToolConfigEntry(realtimeConfig, stampStateUpdatedAt())]);
-    if (!response?.success) {
-      throw new Error(response?.error?.message || '上传工具凭据失败。');
+    // tool_config can contain a login cookie/API key. "success: true" is NOT
+    // proof that its row changed: D1 can report per-entry rejections or skip
+    // an outdated conditional write. Treat both as unsynced, never clear the
+    // durable retry marker while the old cloud copy may still be live.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await putCloudClientState(client, [
+        buildToolConfigEntry(realtimeConfig, stampStateUpdatedAt()),
+      ]);
+      if (!response?.success) {
+        throw new Error(response?.error?.message || '上传工具凭据失败。');
+      }
+      const result = response as {
+        data?: {
+          rejected?: Array<{ key: string; message?: string }>;
+          skippedEntries?: Array<{ namespace: string; key: string }>;
+        };
+      };
+      if (result.data?.rejected?.length) {
+        throw new Error('Worker 拒绝更新云端工具配置；旧凭据可能仍在云端，请重新连接后重试。');
+      }
+      if (result.data?.skippedEntries?.length) {
+        await alignStateClockWithRemote(client, [AMSG_GLOBAL_NAMESPACE]);
+        if (attempt === 0) continue;
+        throw new Error('云端已有更新的工具配置，未确认覆盖旧凭据；请重新连接后重试。');
+      }
+      return;
     }
   },
 
