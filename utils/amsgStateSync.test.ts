@@ -39,6 +39,7 @@ import {
   AMSG2_PENDING_SYNC_LS_KEY,
   AMSG2_PENDING_CRED_SYNC_LS_KEY,
   AMSG2_PENDING_TOOL_CONFIG_LS_KEY,
+  AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY,
   cancelAllRemoteAmsgTasks,
   wipeAmsgCloudData,
   wipeAmsgCloudDataForReset,
@@ -102,6 +103,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   localStorage.removeItem(AMSG2_PENDING_SYNC_LS_KEY);
   localStorage.removeItem(AMSG2_PENDING_TOOL_CONFIG_LS_KEY);
+  localStorage.removeItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY);
   localStorage.removeItem(AMSG2_PENDING_CRED_SYNC_LS_KEY);
   localStorage.removeItem(AMSG_INSTANT_CHAT_PENDING_LS_KEY);
   forgetAllCredIds();
@@ -488,6 +490,49 @@ describe('脏标记持久化与启动补传', () => {
 describe('工具凭据（tool_config）的重试与底账', () => {
   const readMark = () => localStorage.getItem(AMSG2_PENDING_TOOL_CONFIG_LS_KEY);
   const config = { weatherEnabled: true } as any;
+
+  it('版本升级首次启动：无历史欠账也覆盖旧云端 tool_config，成功后登记已对齐', async () => {
+    resumePendingAmsgStateSync({
+      characters: [], userProfile: {} as any, groups: [], realtimeConfig: config,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ActiveMsgClient.syncToolConfig).toHaveBeenCalledTimes(1);
+    expect(ActiveMsgClient.syncToolConfig).toHaveBeenCalledWith(config);
+    expect(localStorage.getItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY))
+      .toBe(JSON.stringify(['https://amsg.example.dev', '']));
+    expect(readMark()).toBeNull();
+  });
+
+  it('已完成隐私对齐的同一台 Worker 不重复上传，换 Worker 后重新覆盖', async () => {
+    localStorage.setItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY,
+      JSON.stringify(['https://amsg.example.dev', '']));
+    resumePendingAmsgStateSync({
+      characters: [], userProfile: {} as any, groups: [], realtimeConfig: config,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ActiveMsgClient.syncToolConfig).not.toHaveBeenCalled();
+
+    (ActiveMsgStore.getGlobalConfig as any).mockResolvedValue({
+      workerUrl: 'https://second.example.dev', userId: 'owner-new',
+    });
+    resumePendingAmsgStateSync({
+      characters: [], userProfile: {} as any, groups: [], realtimeConfig: config,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ActiveMsgClient.syncToolConfig).toHaveBeenCalledWith(config);
+    expect(localStorage.getItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY))
+      .toBe(JSON.stringify(['https://second.example.dev', 'owner-new']));
+  });
+
+  it('首次隐私对齐失败时不假装已清理：留下欠账，供重试或下次启动', async () => {
+    (ActiveMsgClient.syncToolConfig as any).mockRejectedValueOnce(new Error('rejected cloud write'));
+    resumePendingAmsgStateSync({
+      characters: [], userProfile: {} as any, groups: [], realtimeConfig: config,
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(readMark()).toBe('1');
+    expect(localStorage.getItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY)).toBeNull();
+  });
 
   it('传成功 → 只发一次请求，底账清空', async () => {
     syncAmsgToolConfig(config);
