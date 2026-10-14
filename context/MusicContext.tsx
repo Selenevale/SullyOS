@@ -13,7 +13,7 @@ import React, {
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 import { DB } from '../utils/db';
-import { getProxyWorkerUrl, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT, isLegacyProxyWorkerUrl } from '../utils/proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT, isLegacyProxyWorkerUrl } from '../utils/proxyWorker';
 import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 import { resolveRefToDataUrl } from '../utils/blobRef';
 
@@ -237,6 +237,7 @@ export const musicApi = {
     const cookie = normalizeCookie(cfg.cookie);
     if (cookie) headers['X-Netease-Cookie'] = cookie;
     const url = `${resolveMusicWorkerUrl(cfg)}/netease${path.startsWith('/') ? path : '/' + path}`;
+    Object.assign(headers, proxyWorkerAuthHeadersFor(url));
     const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body || {}) });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j?.error || j?.message || `HTTP ${res.status}`);
