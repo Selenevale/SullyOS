@@ -1,7 +1,7 @@
 # 私有版 SullyOS · Cloudflare 试玩版部署前清单
 
-> 对象：`Selenevale/SullyOS` 的 **`hardening-v1`** 分支。记录于 2026-10-13。
-> 这是一张**待执行的验收清单**，不是部署成功证明。当前源码已做静态审查；本阶段尚未执行 `pnpm test:run`、`pnpm build`、真实 Cloudflare 部署或端到端验证。
+> 对象：`Selenevale/SullyOS` 的 **`hardening-v1`** 分支。记录于 2026-10-13，最近更新 2026-10-14。
+> 这是一张**部署前验收清单**，不是 Cloudflare 部署成功证明。Work 隔离环境已针对固定提交 `ba366a7` 运行：锁定依赖、完整构建、AMSG 双成品安全检查均通过；Vitest 使用 `--maxWorkers=2 --minWorkers=1` 时 7,575 通过、0 失败、1 跳过，而未限制并发的完整运行有 3 项偶发失败。原版遗留 656 条 TypeScript 诊断，与冻结 `master` 完全一致，仍导致 `tsc --noEmit` 退出失败。**本分支后续提交（包括新的默认 Vitest 并发配置）尚须重新实测；尚无真实 Cloudflare 部署或端到端验收。**
 > 不要照上游的“一键部署/自动更新 Cloudflare Token/Sync fork”教程来配置私有版。
 
 ## 先确认来源与隔离
@@ -16,8 +16,10 @@
 - [ ] 使用锁定版本安装依赖（项目根目录 `pnpm install --frozen-lockfile`），记录所用 Node/pnpm 版本。
 - [ ] 可先执行无需项目依赖的 `node --test scripts/verify-private-amsg-bundle.test.mjs`（也可运行 `pnpm run test:private-artifact`）检查安全产物验证器本身；**这不能取代**全项目测试。
 - [ ] `scripts/build-workers.mjs` 现在会自动对 **两个** AMSG 构建产物做 fail-closed 保护校验：缺少 AMSG_ALLOWED_ORIGIN / API 令牌验证 / 禁止自更新等代码就会让构建报错。禁止通过跳过此步骤部署仓库已跟踪的旧 `worker/amsg/worker.bundle.js`。
+- [ ] 当前默认 Vitest 配置已限制为 `maxWorkers: 2, minWorkers: 1`，依据 Work 上通过的等效 CLI 设置；避免十万条 IndexedDB 测试与美化投稿的异步测试在并行运行时抢占过多资源。改变 worker 数或测试硬件时仍要重新全量复测；**未删掉压力数据，也未放宽测试超时**。
 - [ ] 执行 `pnpm run test:run`，尤其核查 `worker/proxyHardening.test.ts`、`worker/proxyNetworkBoundary.test.ts`、`worker/proxyCredentialBoundary.test.ts`、`worker/amsg/src/index.test.ts`、`utils/amsgToolPack.test.ts`、`utils/activeMsgSettingsModal.test.ts`。
-- [ ] 执行 `pnpm exec tsc --noEmit` 或项目等价 TS 校验，再运行 `pnpm run build` 并检查 `dist/`。
+- [ ] 执行 `pnpm exec tsc --noEmit` 并留存错误与冻结 master 对比；截至 `ba366a7` 的实测 656 条为上游历史类型诊断，**并不等于 tsc 通过**。上线验收必须明确决定如何处理既有诊断，任何新增诊断应作为回归阻塞。
+- [ ] 运行 `pnpm run build` 并检查 `dist/`，不能复用旧 bundle。
 - [ ] **特别注意旧 Worker bundle**：源码 `worker/amsg/src/index.ts` 和 `worker/amsg/worker.bundle.js` 是两个文件。提交源码不会自动重打包已经跟踪的 `worker.bundle.js`。必须先运行 `pnpm run build:workers`（`pnpm run build` 也会运行），确认重新生成的 `worker/amsg/worker.bundle.js` 及 `public/amsg-worker.bundle.js` 确实包含私有版的访问控制，再发布。**严禁直接上传仓库中未重新构建的旧 bundle。**
 
 ## 网页：Cloudflare Pages
