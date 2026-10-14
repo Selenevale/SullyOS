@@ -856,6 +856,43 @@ describe('toRemoteAvatarUrl', () => {
   });
 });
 
+// Private tool credentials must not be considered erased merely because
+// a multi-row client_state API returned success for the HTTP request.
+describe('ActiveMsgClient.syncToolConfig privacy acknowledgement', () => {
+  beforeEach(() => {
+    reiClient.init.mockReset().mockResolvedValue(undefined);
+    reiClient.putClientState.mockReset().mockResolvedValue({ success: true, data: {} });
+  });
+
+  it('normal sync uploads a newly sanitized tool config', async () => {
+    await ActiveMsgClient.syncToolConfig({
+      newsEnabled: false, newsApiKey: 'stale-key-never-upload',
+    } as any);
+    expect(reiClient.putClientState).toHaveBeenCalledTimes(1);
+    const [entry] = reiClient.putClientState.mock.calls[0][0];
+    expect(entry).toMatchObject({ namespace: 'amsg:global', key: 'tool_config' });
+    expect(JSON.stringify(entry.value)).not.toContain('stale-key-never-upload');
+  });
+
+  it('success with rejected entries is still a failed credential replacement', async () => {
+    reiClient.putClientState.mockResolvedValue({
+      success: true, data: { rejected: [{ namespace: 'amsg:global', key: 'tool_config', message: 'too large' }] },
+    });
+    await expect(ActiveMsgClient.syncToolConfig(undefined)).rejects.toThrow(/拒绝更新云端工具配置/);
+  });
+
+  it('a conditionally skipped cloud write is not accepted as a credential cleanup', async () => {
+    reiClient.putClientState.mockResolvedValue({
+      success: true, data: { skippedEntries: [{ namespace: 'amsg:global', key: 'tool_config' }] },
+    });
+    reiClient.getClientState.mockResolvedValue({
+      success: true, data: { entries: [{ key: 'tool_config', updatedAt: Date.now() + 120000 }] },
+    });
+    await expect(ActiveMsgClient.syncToolConfig(undefined)).rejects.toThrow(/未确认覆盖旧凭据/);
+    expect(reiClient.putClientState).toHaveBeenCalledTimes(2);
+  });
+});
+
 // 回归守卫：「清除云端状态」之后 AI 任务必须还能跑。
 //
 // 实测踩过：点完那个按钮，聊多少轮天任务都一直失败。云端有三份数据，角色上下文
