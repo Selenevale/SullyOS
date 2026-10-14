@@ -592,7 +592,7 @@ describe('工具凭据（tool_config）的重试与底账', () => {
     expect(readMark()).toBeNull();
   });
 
-  it('上传期间配置又改了 → 不拿旧那份的成功去清新的欠账', async () => {
+  it('上传期间配置改了：旧请求结束后立即自动补传新一份，不必等下一轮聊天', async () => {
     let release: () => void = () => {};
     (ActiveMsgClient.syncToolConfig as any).mockImplementationOnce(
       () => new Promise<void>((resolve) => { release = resolve; }));
@@ -600,14 +600,27 @@ describe('工具凭据（tool_config）的重试与底账', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     const newer = { weatherEnabled: false } as any;
-    syncAmsgToolConfig(newer);          // 上一次还没回来
+    syncAmsgToolConfig(newer);
+    expect(readMark()).toBe('1'); // 上一份仍在飞，新的必须留欠账
     release();
     await vi.advanceTimersByTimeAsync(1);
 
-    expect(readMark()).toBe('1');       // 新的那份还欠着
-    await flushAmsgState('test');
-    await vi.advanceTimersByTimeAsync(1);
+    expect(ActiveMsgClient.syncToolConfig).toHaveBeenCalledTimes(2);
     expect(ActiveMsgClient.syncToolConfig).toHaveBeenLastCalledWith(newer);
+    expect(readMark()).toBeNull();
+  });
+
+  it('同一配置对象复用但 MCP 清单改了，也不能用旧成功清掉新配置', async () => {
+    let release: () => void = () => {};
+    (ActiveMsgClient.syncToolConfig as any).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { release = resolve; }));
+    syncAmsgToolConfig(config);
+    await vi.advanceTimersByTimeAsync(1);
+
+    syncAmsgToolConfig(config); // 相同引用，外部 MCP 配置可能已经修改
+    release();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ActiveMsgClient.syncToolConfig).toHaveBeenCalledTimes(2);
     expect(readMark()).toBeNull();
   });
 });
