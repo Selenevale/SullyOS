@@ -359,7 +359,23 @@ export const resumePendingAmsgStateSync = (scope: {
   // 工具凭据的欠账也在这儿补。底账只记「欠着一次」，凭据本体不落 localStorage
   // （那等于把 token 又抄一份到别的地方），补传用启动时这份最新配置——它本来就是
   // 云端此刻该有的那一份。
-  if (hasPersistedToolConfigMark()) syncAmsgToolConfig(scope.realtimeConfig);
+  if (hasPersistedToolConfigMark()) {
+    syncAmsgToolConfig(scope.realtimeConfig);
+  } else if (scope.realtimeConfig) {
+    // This private release stops uploading credentials for disabled tools.
+    // Older cloud rows may still contain those keys even when the user has
+    // not touched settings since upgrading. Re-upload the current *filtered*
+    // config once for each Worker/user combination after local state loads.
+    // Do not remove the migration debt marker until the Worker accepts the row.
+    void ActiveMsgStore.getGlobalConfig().then((config) => {
+      if (!config.workerUrl?.trim() || hasPendingToolConfig) return;
+      if (readToolConfigPrivacySyncMark() !== toolConfigSyncOwner(config)) {
+        syncAmsgToolConfig(scope.realtimeConfig);
+      }
+    }).catch((error) => {
+      console.warn(`${HEADER} 首次更新云端工具凭据未启动，下次启动会重试`, error);
+    });
+  }
   // 每次启动对齐主 API，覆盖下线前留下的副 API；失败仍沿用欠账与退避重试。
   if (scope.apiConfig) syncAmsgLlmCredentials(scope.apiConfig);
 
@@ -431,6 +447,18 @@ export const syncAmsgToolConfigAndPrompts = (
 // 所以这里给它配上和 fire_pack 同款的退避重试 + localStorage 底账。
 
 export const AMSG2_PENDING_TOOL_CONFIG_LS_KEY = 'amsg2_pending_tool_config';
+/** Contains only Worker URL and user ID, never tool secrets or tokens. */
+export const AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY = 'amsg2_tool_config_privacy_v2';
+
+const toolConfigSyncOwner = (config: { workerUrl?: string; userId?: string }): string =>
+  JSON.stringify([config.workerUrl?.trim().replace(/\\/+$/, '') || '', config.userId || '']);
+const readToolConfigPrivacySyncMark = (): string | null => {
+  try { return localStorage.getItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY); } catch { return null; }
+};
+const markToolConfigPrivacySync = (config: { workerUrl?: string; userId?: string }): void => {
+  try { localStorage.setItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY, toolConfigSyncOwner(config)); }
+  catch { /* next startup will refresh again; no secrets are persisted here */ }
+};
 
 /** 待上传的那份配置。undefined 也是合法载荷（= 什么都没配），所以另用 flag 表示「欠着」。 */
 let pendingToolConfig: RealtimeConfig | undefined;
@@ -467,6 +495,9 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
     }
     await ActiveMsgClient.syncToolConfig(snapshot);
     if (pendingToolConfig === snapshot) {
+      // Only an acknowledged, non-rejected cloud write clears the migration
+      // marker. A failed or skipped write leaves the retry debt intact.
+      markToolConfigPrivacySync(globalConfig);
       hasPendingToolConfig = false;
       pendingToolConfig = undefined;
       writeToolConfigMark(false);
