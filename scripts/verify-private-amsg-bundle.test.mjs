@@ -30,6 +30,12 @@ describe('private AMSG artifact checker', () => {
     assert.throws(() => assertPrivateAmsgBundle(missing), /fails private-baseline validation/);
   });
 
+  it('accepts esbuild-renamed constant-time authentication helper', () => {
+    const renamed = safeBundle.replace('constantTimeEqual(', 'constantTimeEqual2(');
+    assert.equal(verifyPrivateAmsgBundle(renamed).ok, true);
+    assert.doesNotThrow(() => assertPrivateAmsgBundle(renamed));
+  });
+
   it('rejects the original author proxy as the Worker default', () => {
     const bad = safeBundle.replace('https://proxy.invalid', 'https://proxy.friedsully.com');
     assert.equal(verifyPrivateAmsgBundle(bad).ok, false);
