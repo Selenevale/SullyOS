@@ -153,7 +153,7 @@ import {
   toolCallFingerprint,
   type ToolCallRecord,
 } from '../../../utils/agenticToolFeedback';
-import { setProxyWorkerUrlOverride } from '../../../utils/proxyWorker';
+import { setProxyWorkerUrlOverride, setProxyWorkerRuntimeAuth } from '../../../utils/proxyWorker';
 import { XhsMcpClient } from '../../../utils/xhsMcpClient';
 // type-only：编译期擦除，classifier 的实现不会因为这行被拉进 bundle。
 import type { ToolCall } from './classifier';
@@ -207,6 +207,10 @@ interface Env extends NativeFcmEnv {
   AMSG_SERVER_TOKEN?: string;
   /** Exact website origin allowed to access this private Worker. */
   AMSG_ALLOWED_ORIGIN?: string;
+  /** Exact trusted main-network Worker origin, configured here (never from tool_config). */
+  PROXY_WORKER_ORIGIN?: string;
+  /** AMSG-to-main-proxy bearer stored only as a Cloudflare Secret. */
+  PROXY_SERVER_TOKEN?: string;
   /**
    * 排查「模型这轮没说话」时临时打开：填 1 后，跳过诊断日志（[amsg:skip-diag]）会带上模型回复的
    * 原文片段。默认只记形状、不含聊天正文，查完删掉。见 ./skipDiagnostics。
@@ -2838,6 +2842,10 @@ export const resolveVapidEmail = (raw: string | undefined): string =>
 
 /** worker 运行配置；导出便于单测钉住 VAPID 兜底。 */
 export const buildWorkerConfig = (env: Env) => {
+  // Only this Worker's environment may supply the main proxy bearer. A cloud
+  // tool_config URL is never an authority for deciding where to send it.
+  // Missing or mismatched Worker origin intentionally disables cloud tools.
+  setProxyWorkerRuntimeAuth(env.PROXY_WORKER_ORIGIN || '', env.PROXY_SERVER_TOKEN || '');
   // vapid 与 webpush 必须同源同一份：两处各读一次 env 时，改了一处漏另一处
   // 会变成「签名用兜底、校验用空值」这类只在真发推送时才暴露的坑。
   const vapid = {
