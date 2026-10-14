@@ -10,10 +10,10 @@ const makeRequest = (path: string, init: RequestInit = {}) => new Request(
   'https://proxy.example.invalid' + path,
   {
     ...init,
-    headers: { Origin: 'https://private.pages.dev', ...init.headers },
+    headers: { Origin: 'https://private.pages.dev', 'X-Proxy-Token': 'proxy-fixture-token-only-never-use-in-production-0123456789', ...init.headers },
   },
 );
-const env = { PROXY_ALLOWED_ORIGINS: 'https://private.pages.dev' };
+const env = { PROXY_ALLOWED_ORIGINS: 'https://private.pages.dev', PROXY_SERVER_TOKEN: 'proxy-fixture-token-only-never-use-in-production-0123456789' };
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -60,7 +60,8 @@ describe('private proxy credential handling', () => {
         Authorization: 'Bearer a-private-github-token',
       },
     }), env);
-    expect(res.status).toBe(302);
+    expect(res.status).toBe(502);
+    expect(res.headers.has('Location')).toBe(false);
     expect(outbound).toHaveBeenCalledTimes(1);
     expect(outbound.mock.calls[0][1]).toMatchObject({
       redirect: 'manual',
