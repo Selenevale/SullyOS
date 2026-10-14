@@ -11,6 +11,7 @@
  */
 
 import { classifyFetchFailure, parseTargetUrl } from './networkFailureDiagnosis';
+import { proxyWorkerAuthHeadersFor } from './proxyWorker';
 
 export interface McpToolResult {
     success: boolean;
@@ -156,6 +157,7 @@ const trySpiderV3CommentPatch = async (
                 'x-xhs-cookie': cookie,
                 ...(litePlatform !== 'auto' ? { 'x-xhs-platform': litePlatform } : {}),
                 'x-xhs-experiment-ack': XHS_SPIDER_V3_EXPERIMENT.optInValue,
+                ...proxyWorkerAuthHeadersFor(`${baseUrl}/api/xhs-experimental-comments`),
             },
             body: JSON.stringify({
                 acknowledge_risk: true,
@@ -205,7 +207,7 @@ const bridgePost = async (
     const baseUrl = serverUrl.replace(/\/+$/, '').replace(/\/api$/, '');
     const url = `${baseUrl}/api/${endpoint}`;
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...proxyWorkerAuthHeadersFor(url) };
     const ck = resolveLiteCookie();
     if (ck) headers['x-xhs-cookie'] = ck;
     const requestPlatform = endpoint === 'check-login'
