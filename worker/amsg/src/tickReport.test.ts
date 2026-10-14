@@ -380,8 +380,16 @@ describe.skipIf(!sqlite)('定时任务细账（真 SQLite）', () => {
   });
 
   describe('GET /debug 的定时任务判定', () => {
-    const debug = async (d1: unknown) =>
-      (await (await (worker as any).fetch(new Request('https://w.example/debug'), envWith(d1))).json()).data;
+    const debug = async (d1: unknown) => {
+      const response = await (worker as any).fetch(
+        new Request('https://w.example/debug', {
+          headers: { 'X-Client-Token': 'shared-secret' },
+        }),
+        envWith(d1),
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()).data;
+    };
 
     /**
      * 回归守卫：一条在正常重试的任务到点四十分钟很平常（到点时刻在重试期间不会往后挪），
