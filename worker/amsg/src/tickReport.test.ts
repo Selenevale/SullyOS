@@ -336,6 +336,7 @@ describe.skipIf(!sqlite)('定时任务细账（真 SQLite）', () => {
     VAPID_PUBLIC_KEY: 'pub-key',
     VAPID_PRIVATE_KEY: 'priv-key',
     AMSG_SERVER_TOKEN: 'shared-secret',
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: db,
     ...extra,
   } as any);
