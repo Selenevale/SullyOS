@@ -3153,9 +3153,8 @@ export const ActiveMsgClient = {
     // an outdated conditional write. Treat both as unsynced, never clear the
     // durable retry marker while the old cloud copy may still be live.
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const response = await putCloudClientState(client, [
-        buildToolConfigEntry(realtimeConfig, stampStateUpdatedAt()),
-      ]);
+      const intended = buildToolConfigEntry(realtimeConfig, stampStateUpdatedAt());
+      const response = await putCloudClientState(client, [intended]);
       if (!response?.success) {
         throw new Error(response?.error?.message || '上传工具凭据失败。');
       }
@@ -3172,6 +3171,20 @@ export const ActiveMsgClient = {
         await alignStateClockWithRemote(client, [AMSG_GLOBAL_NAMESPACE]);
         if (attempt === 0) continue;
         throw new Error('云端已有更新的工具配置，未确认覆盖旧凭据；请重新连接后重试。');
+      }
+      // The cloud's write acknowledgement alone is not proof that the old
+      // encrypted row has been replaced. Read the global row back through the
+      // authenticated client; do not clear the retry debt if it is absent,
+      // unreadable or differs (for example, another tab won a concurrent race).
+      // Never log the value: it can contain API keys and login cookies.
+      const readBack = await client.getClientState(AMSG_GLOBAL_NAMESPACE);
+      if (!readBack?.success) {
+        throw new Error('无法读取云端工具配置确认清理结果；旧凭据可能仍在云端，请稍后重试。');
+      }
+      const matching = (readBack.data?.entries ?? [])
+        .filter((entry) => entry?.key === AMSG_TOOL_CONFIG_KEY);
+      if (matching.length !== 1 || matching[0]?.value !== intended.value) {
+        throw new Error('云端工具配置与本机最新设置不一致；尚未确认旧凭据被覆盖，请稍后重试。');
       }
       return;
     }
