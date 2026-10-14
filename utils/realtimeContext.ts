@@ -5,7 +5,7 @@
 
 import { safeResponseJson } from './safeApi';
 import { DB } from './db';
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor } from './proxyWorker';
 import { nowInTimeZone } from './timezone';
 import {
     performSearch as performSearchCore,
@@ -252,7 +252,8 @@ export const RealtimeContextManager = {
             const response = await fetch(workerUrl, {
                 headers: {
                     'Accept': 'application/json',
-                    'X-Brave-API-Key': apiKey  // Worker 需要这个 header
+                    'X-Brave-API-Key': apiKey,  // Worker 需要这个 header
+                    ...proxyWorkerAuthHeadersFor(workerUrl)
                 }
             });
 
@@ -507,7 +508,8 @@ export const NotionManager = {
             const response = await fetch(`${NotionManager.WORKER_URL}/notion/database/${databaseId}`, {
                 method: 'GET',
                 headers: {
-                    'X-Notion-API-Key': apiKey
+                    'X-Notion-API-Key': apiKey,
+                    ...proxyWorkerAuthHeadersFor(NotionManager.WORKER_URL)
                 }
             });
 
@@ -576,7 +578,8 @@ export const NotionManager = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Notion-API-Key': apiKey
+                    'X-Notion-API-Key': apiKey,
+                    ...proxyWorkerAuthHeadersFor(NotionManager.WORKER_URL)
                 },
                 body: JSON.stringify(pageData)
             });
@@ -622,7 +625,8 @@ export const NotionManager = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Notion-API-Key': apiKey
+                    'X-Notion-API-Key': apiKey,
+                    ...proxyWorkerAuthHeadersFor(NotionManager.WORKER_URL)
                 },
                 body: JSON.stringify({
                     database_id: databaseId,
@@ -707,7 +711,8 @@ export const NotionManager = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Notion-API-Key': apiKey
+                    'X-Notion-API-Key': apiKey,
+                    ...proxyWorkerAuthHeadersFor(NotionManager.WORKER_URL)
                 },
                 body: JSON.stringify({
                     database_id: notesDatabaseId,
@@ -1367,7 +1372,7 @@ export const FeishuManager = {
             // 用列出所有表的端点（飞书没有获取单个表的GET端点）
             const response = await fetch(`${FeishuManager.WORKER_URL}/feishu/bitable/${baseId}/tables`, {
                 method: 'GET',
-                headers: { 'X-Feishu-Token': tokenResult.token }
+                headers: { 'X-Feishu-Token': tokenResult.token, ...proxyWorkerAuthHeadersFor(FeishuManager.WORKER_URL) }
             });
 
             const text = await response.text();
@@ -1439,7 +1444,8 @@ export const FeishuManager = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Feishu-Token': tokenResult.token
+                    'X-Feishu-Token': tokenResult.token,
+                    ...proxyWorkerAuthHeadersFor(FeishuManager.WORKER_URL)
                 },
                 body: JSON.stringify({ fields })
             });
@@ -1490,7 +1496,8 @@ export const FeishuManager = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Feishu-Token': tokenResult.token
+                    'X-Feishu-Token': tokenResult.token,
+                    ...proxyWorkerAuthHeadersFor(FeishuManager.WORKER_URL)
                 },
                 body: JSON.stringify({
                     filter: {
@@ -1585,7 +1592,7 @@ export const FeishuManager = {
 
             const response = await fetch(`${FeishuManager.WORKER_URL}/feishu/bitable/${baseId}/${tableId}/records/${recordId}`, {
                 method: 'GET',
-                headers: { 'X-Feishu-Token': tokenResult.token }
+                headers: { 'X-Feishu-Token': tokenResult.token, ...proxyWorkerAuthHeadersFor(FeishuManager.WORKER_URL) }
             });
 
             const text = await response.text();
