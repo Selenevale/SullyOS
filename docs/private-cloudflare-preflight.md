@@ -1,7 +1,7 @@
 # 私有版 SullyOS · Cloudflare 试玩版部署前清单
 
 > 对象：`Selenevale/SullyOS` 的 **`hardening-v1`** 分支。记录于 2026-10-13，最近更新 2026-10-14。
-> 这是一张**部署前验收清单**，不是 Cloudflare 部署成功证明。Work 隔离环境已针对固定提交 `ba366a7` 运行：锁定依赖、完整构建、AMSG 双成品安全检查均通过；Vitest 使用 `--maxWorkers=2 --minWorkers=1` 时 7,575 通过、0 失败、1 跳过，而未限制并发的完整运行有 3 项偶发失败。原版遗留 656 条 TypeScript 诊断，与冻结 `master` 完全一致，仍导致 `tsc --noEmit` 退出失败。**本分支后续提交（包括新的默认 Vitest 并发配置）尚须重新实测；尚无真实 Cloudflare 部署或端到端验收。**
+> 本地验收基线：Work 已针对固定提交 `c2ca6cf` 通过默认 Vitest 7,586/0/1、私有产物检查5/5及完整构建；TypeScript与冻结master相同656条历史诊断（新增0）。**其后阶段16的主代理鉴权新提交尚未真正运行Vitest/TS/build，更未部署Cloudflare，不能继承上述验收结论。**
 > 不要照上游的“一键部署/自动更新 Cloudflare Token/Sync fork”教程来配置私有版。
 
 ## 先确认来源与隔离
@@ -18,7 +18,7 @@
 - [ ] `scripts/build-workers.mjs` 现在会自动对 **两个** AMSG 构建产物做 fail-closed 保护校验：缺少 AMSG_ALLOWED_ORIGIN / API 令牌验证 / 禁止自更新等代码就会让构建报错。禁止通过跳过此步骤部署仓库已跟踪的旧 `worker/amsg/worker.bundle.js`。
 - [ ] 当前默认 Vitest 配置已限制为 `maxWorkers: 2, minWorkers: 1`，依据 Work 上通过的等效 CLI 设置；避免十万条 IndexedDB 测试与美化投稿的异步测试在并行运行时抢占过多资源。改变 worker 数或测试硬件时仍要重新全量复测；**未删掉压力数据，也未放宽测试超时**。
 - [ ] 执行 `pnpm run test:run`，尤其核查 `worker/proxyHardening.test.ts`、`worker/proxyNetworkBoundary.test.ts`、`worker/proxyCredentialBoundary.test.ts`、`worker/amsg/src/index.test.ts`、`utils/amsgToolPack.test.ts`、`utils/activeMsgSettingsModal.test.ts`。
-- [ ] 执行 `pnpm exec tsc --noEmit` 并留存错误与冻结 master 对比；截至 `ba366a7` 的实测 656 条为上游历史类型诊断，**并不等于 tsc 通过**。上线验收必须明确决定如何处理既有诊断，任何新增诊断应作为回归阻塞。
+- [ ] 执行 `pnpm exec tsc --noEmit` 并留存错误与冻结 master 对比；截至 `c2ca6cf` 的实测 656 条为上游历史类型诊断，**并不等于 tsc 通过**。上线验收必须明确决定如何处理既有诊断，任何新增诊断应作为回归阻塞。
 - [ ] 运行 `pnpm run build` 并检查 `dist/`，不能复用旧 bundle。
 - [ ] **特别注意旧 Worker bundle**：源码 `worker/amsg/src/index.ts` 和 `worker/amsg/worker.bundle.js` 是两个文件。提交源码不会自动重打包已经跟踪的 `worker.bundle.js`。必须先运行 `pnpm run build:workers`（`pnpm run build` 也会运行），确认重新生成的 `worker/amsg/worker.bundle.js` 及 `public/amsg-worker.bundle.js` 确实包含私有版的访问控制，再发布。**严禁直接上传仓库中未重新构建的旧 bundle。**
 
@@ -33,11 +33,12 @@
 
 - [ ] 部署 `worker/index.js` 的私有源码，而非作者公共代理。
 - [ ] 设置 `PROXY_ALLOWED_ORIGINS` 为**自己 Pages 的精确 origin**（主代理可用英文逗号分隔多条），没有正确设置就拒绝陌生浏览器。
+- [ ] 在**主代理 Worker** 的 Cloudflare Secrets 中设独立高熵 `PROXY_SERVER_TOKEN`（至少32字符），并在前端「设置 → 自定义网络代理」只在本机填相同值。禁止放进 GitHub、Vite、URL、日志或 tool_config。
 - [ ] 有 WebDAV 需求时才设置 `PROXY_WEBDAV_ALLOWED_HOSTS`（英文逗号分隔精确 hostname；默认不开放）。确认 WebDAV 正常登录/备份与跨站重定向处理。
 - [ ] `PROXY_ENABLE_JINA_READER` 默认不设置；启用意味着分享抓取网址给第三方 Jina。
 - [ ] 不部署任何 `/cf-api` 管理权限中转，不要给公开网站或主代理提供 Cloudflare 高权限 Token。
-- [ ] 用假账号/假 API key 测试允许来源、陌生来源、无 Origin、IP/内网网址、网页重定向、GitHub 和 XHS 请求跳转。CORS 不等于 API 鉴权；主代理无 Origin/被伪造 Origin 的滥用保护仍是上线阻塞项。
-- [ ] **上线阻塞（待开发）**：按 [主代理独立鉴权合同](./private-proxy-auth-contract.md) 给业务请求增加真正的访问 Token，同时补齐网页及 AMSG 工具的授权头；仅依赖 Origin/CORS 不足以保护私人代理。
+- [ ] 用假账号/假 API key 验证允许/不允许的 Origin、无 Origin、缺/错 Token、IP/内网网页抓取、GitHub/WebDAV/XHS 跳转。业务上游 3xx 被转换为无 Location 的 502，测试其功能影响及密钥不外流。
+- [ ] **上线阻塞（待实测）**：主代理独立 Token + 浏览器/AMSG 传递链已提交源码，见 [独立鉴权合同](./private-proxy-auth-contract.md)，但必须在新 HEAD 上重跑完整测试并在Cloudflare假数据环境验证，不能把静态提交视为上线许可。
 
 ## AMSG Worker（角色离线主动消息）
 
@@ -45,6 +46,7 @@
 - [ ] `AMSG_MASTER_KEY`：设置成 Cloudflare **Secret**，保存可靠的离线备份，**以后不能随意更换**（否则已加密的任务可能无法解开）。
 - [ ] `AMSG_SERVER_TOKEN`：设置为高强度、专用于 AMSG 的随机 **Secret**；在糯米机的「主动消息 2.0 → 专用访问密码」输入同一值。勿提交到 GitHub、聊天记录或打包成前端常量。
 - [ ] `AMSG_ALLOWED_ORIGIN`：填唯一的正式 Pages origin，例如 `https://<your-project>.pages.dev`；不是 Worker 地址、不是 `*`、不是带路径的 URL。需要本地开发 `http://localhost` 时使用隔离的开发环境。
+- [ ] AMSG 如需后台执行搜索/Notion/飞书，还须在 **AMSG Worker** 设置 `PROXY_WORKER_ORIGIN`（Text，精确主代理 origin）与 `PROXY_SERVER_TOKEN`（Cloudflare Secret，与主代理相同）。它不是 `AMSG_SERVER_TOKEN`，不得进入云端 tool_config；缺失时云端代理工具 fail-closed。
 - [ ] 如要浏览器/PWA 通知，准备 `VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY`、`VAPID_EMAIL`，与糯米机推送设置里的密钥对一致，私钥放 Secret。
 - [ ] **绝不配置 `CF_API_TOKEN`** 给 AMSG；私有版 `/self-update` 和 `/self-update/check` 已关闭。升级必须审核代码、重新构建 bundle、人工发布、再「重新连接并验证」。
 - [ ] 验证 `/config-check` 只回配没配；缺 Token 时实际业务路由 503，Token 错误 401，陌生网页 Origin 403、且没有允许 CORS 头；正确的 Pages origin + Token 可以连接。
