@@ -4185,12 +4185,19 @@ describe('/debug — 只读诊断', () => {
     expect(registered.storage.pushSubscriptionRegistered).toBe(true);
   });
 
-  it('D1 没绑时照样能答（配置全缺的时候正是最需要它的时候）', async () => {
-    const data = await debug(undefined);
-    expect(data.storage.reachable).toBe(false);
-    expect(data.config.ok).toBe(false);
-    expect(data.config.missing).toContain('DB');
-    expect(data.tick).toBe('unknown');
+  it('D1 没绑时敏感 debug 拒绝读取，只允许 config-check 报缺失项', async () => {
+    const missingDbEnv = envWith(undefined);
+    const denied = await (worker as any).fetch(new Request('https://w.example/debug', {
+      headers: { 'X-Client-Token': 'shared-secret' },
+    }), missingDbEnv);
+    expect(denied.status).toBe(503);
+    expect((await denied.json()).error.missing).toContain('DB');
+
+    const check = await (worker as any).fetch(new Request('https://w.example/config-check'), missingDbEnv);
+    expect(check.status).toBe(200);
+    const report = (await check.json()).data;
+    expect(report.ok).toBe(false);
+    expect(report.missing).toContain('DB');
   });
 
   it('查库炸了只报错误类型，不把 SQL 片段漏出去', async () => {
