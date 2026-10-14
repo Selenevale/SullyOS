@@ -7,12 +7,13 @@ const proxy = proxyWorker as {
 };
 const env = {
   PROXY_ALLOWED_ORIGINS: 'https://private.pages.dev',
+  PROXY_SERVER_TOKEN: 'proxy-fixture-token-only-never-use-in-production-0123456789',
   PROXY_WEBDAV_ALLOWED_HOSTS: 'dav.example.com',
 };
 const browserRequest = (path: string, init: RequestInit = {}) =>
   new Request('https://proxy.example.invalid' + path, {
     ...init,
-    headers: { Origin: 'https://private.pages.dev', ...init.headers },
+    headers: { Origin: 'https://private.pages.dev', 'X-Proxy-Token': env.PROXY_SERVER_TOKEN, ...init.headers },
   });
 const webdavRequest = (url: string) => browserRequest('/webdav?url=' + encodeURIComponent(url), {
   method: 'POST',
@@ -32,6 +33,7 @@ describe('private proxy external destination boundaries', () => {
     vi.stubGlobal('fetch', outbound);
     const response = await proxy.fetch(webdavRequest('https://dav.example.com/backup.zip'), {
       PROXY_ALLOWED_ORIGINS: env.PROXY_ALLOWED_ORIGINS,
+      PROXY_SERVER_TOKEN: env.PROXY_SERVER_TOKEN,
     });
     expect(response.status).toBe(403);
     expect(outbound).not.toHaveBeenCalled();
