@@ -4,9 +4,9 @@ import worker from './index.js';
 
 const expand = (url: string) => worker.fetch(new Request('https://local.test/expand-url', {
   method: 'POST',
-  headers: { 'content-type': 'application/json' },
+  headers: { 'content-type': 'application/json', 'X-Proxy-Token': 'proxy-fixture-token-only-never-use-in-production-0123456789' },
   body: JSON.stringify({ url }),
-}), {}, { waitUntil() {} });
+}), { PROXY_SERVER_TOKEN: 'proxy-fixture-token-only-never-use-in-production-0123456789' }, { waitUntil() {} });
 
 describe('/expand-url', () => {
   afterEach(() => vi.unstubAllGlobals());
