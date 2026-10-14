@@ -4923,7 +4923,11 @@ describe('即时对话的接线', () => {
     const response = await call(
       'https://w.example/instant-chat',
       { method: 'POST', body: '{}' },
-      { AMSG_MASTER_KEY: '', DB: undefined } as any,
+      {
+        AMSG_MASTER_KEY: '',
+        DB: undefined,
+        AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
+      } as any,
     );
     expect(response.status).toBe(503);
     expect((await response.json()).error.code).toBe('WORKER_CONFIG_MISSING');
