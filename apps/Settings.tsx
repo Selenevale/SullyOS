@@ -21,7 +21,7 @@ import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { resolveXhsDeploymentMode } from '../utils/xhsMcpConfig';
 import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
 import { getLuckinToken, setLuckinToken as saveLuckinToken, isLuckinEnabled, setLuckinEnabled as saveLuckinEnabled, testLuckinConnection, resetLuckinSession } from '../utils/luckinMcpClient';
-import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, setProxyWorkerUrl, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
+import { consumeProxyWorkerSettingsFocus, getProxyWorkerUrl, setProxyWorkerUrl, getProxyWorkerAccessToken, setProxyWorkerAccessToken, DEFAULT_PROXY_WORKER } from '../utils/proxyWorker';
 import { VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { FISH_VOICE_ACTING_GUIDE } from '../utils/fishAudioTts';
 import {
@@ -636,6 +636,7 @@ const Settings: React.FC = () => {
   // 入口刻意低调：默认折叠，普通用户不需要碰，开箱即用。
   const [focusProxyConfigOnMount] = useState(() => consumeProxyWorkerSettingsFocus());
   const [proxyWorkerInput, setProxyWorkerInput] = useState(getProxyWorkerUrl());
+  const [proxyAccessTokenInput, setProxyAccessTokenInput] = useState(getProxyWorkerAccessToken);
   const [showProxyConfig, setShowProxyConfig] = useState(focusProxyConfigOnMount);
   const proxyConfigSectionRef = useRef<HTMLElement | null>(null);
   const [analyticsEnabled, setAnalyticsEnabledState] = useState(() => isAnalyticsEnabled());
@@ -1608,8 +1609,10 @@ const Settings: React.FC = () => {
           trackEvent('代理地址格式被拒');
           return;
       }
+      const previous = getProxyWorkerUrl();
       setProxyWorkerUrl(raw);                 // 传空 / 默认地址 → 自动回落默认
       const applied = getProxyWorkerUrl();
+      if (previous !== applied) setProxyAccessTokenInput(''); // never reuse another Worker's bearer
       setProxyWorkerInput(applied);
       // 上云那份的 proxyWorkerUrl 是现算的（读 getProxyWorkerUrl），所以要在生效之后再传。
       syncAmsgToolConfig(realtimeConfig);
@@ -1620,9 +1623,20 @@ const Settings: React.FC = () => {
   const handleResetProxyWorker = () => {
       setProxyWorkerUrl('');
       setProxyWorkerInput(getProxyWorkerUrl());
+      setProxyAccessTokenInput(getProxyWorkerAccessToken());
       syncAmsgToolConfig(realtimeConfig);
       trackEvent('恢复默认代理 Worker', { via: 'reset-button' });
       addToast('已恢复为默认 Worker', 'info');
+  };
+
+  const handleSaveProxyWorkerToken = () => {
+      if (getProxyWorkerUrl() === DEFAULT_PROXY_WORKER && proxyAccessTokenInput.trim()) {
+          addToast('请先保存自己部署的主代理 Worker 地址', 'error');
+          return;
+      }
+      setProxyWorkerAccessToken(proxyAccessTokenInput);
+      setProxyAccessTokenInput(getProxyWorkerAccessToken());
+      addToast(proxyAccessTokenInput.trim() ? '主代理访问密钥仅已保存在当前浏览器' : '已清除当前浏览器的主代理访问密钥', 'success');
   };
 
   const handleCheckFirecrawl = async () => {
@@ -3470,8 +3484,7 @@ const Settings: React.FC = () => {
             </button>
         </section>
 
-        {/* 自定义网络代理 — 刻意低调的高级入口。默认折叠，不主动指引基本发现不了。
-            普通用户无需配置：默认走作者部署的公共 Worker，所有功能开箱即用。 */}
+        {/* 私有主代理网络配置。默认无公共服务兜底，必须由所有者自行部署。 */}
         {!showProxyConfig ? (
             <button
                 onClick={() => setShowProxyConfig(true)}
@@ -3483,11 +3496,11 @@ const Settings: React.FC = () => {
             <section ref={proxyConfigSectionRef} className="scroll-mt-4 bg-white/60 rounded-2xl p-4 border border-slate-100">
                 <div className="flex items-center justify-between mb-2">
                     <h2 className="text-xs font-semibold text-slate-500">自定义网络代理 (Worker)</h2>
-                    <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); }} className="text-[10px] text-slate-400">收起</button>
+                    <button onClick={() => { setShowProxyConfig(false); setProxyWorkerInput(getProxyWorkerUrl()); setProxyAccessTokenInput(getProxyWorkerAccessToken()); }} className="text-[10px] text-slate-400">收起</button>
                 </div>
 
                 <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-2 mb-3 leading-relaxed">
-                    <b>一般无需修改这里。</b>默认地址负责静态网页环境中需要跨域转发的联网功能；
+                    <b>私有版必须部署自己的 Worker。</b>未配置时默认地址为不可连接的占位域名；
                     GitHub 备份仍默认直连，只有你在备份设置中主动开启中转后才会使用 Worker。
                     如果你部署了自己的 <b>worker/index.js</b>，可以在这里换成自己的实例。
                 </div>
@@ -3497,7 +3510,8 @@ const Settings: React.FC = () => {
                     <ol className="space-y-1">
                         <li><b>1.</b> 在 Cloudflare 控制台进入 Workers &amp; Pages，新建一个 Worker。</li>
                         <li><b>2.</b> 打开并复制完整的 <a href={PROXY_WORKER_SOURCE_URL} target="_blank" rel="noreferrer" className="font-bold underline underline-offset-2">worker/index.js 源码</a>，替换编辑器里的默认代码，然后部署。</li>
-                        <li><b>3.</b> 复制部署得到的 <b>https://xxx.workers.dev</b> 地址，粘贴到下方并保存。</li>
+                        <li><b>3.</b> 在 Worker Secrets 配置 <b>PROXY_SERVER_TOKEN</b>（独立高熵随机值），并设置 <b>PROXY_ALLOWED_ORIGINS</b> 为本站准确来源。</li>
+                        <li><b>4.</b> 复制部署得到的 <b>https://xxx.workers.dev</b> 地址，粘贴到下方并保存；再把相同 Token 填入下面的本机访问密钥框。</li>
                     </ol>
                 </div>
 
@@ -3520,6 +3534,22 @@ const Settings: React.FC = () => {
                         保存
                     </button>
                 </div>
+
+                <label className="block mt-3 mb-1 text-[10px] font-semibold text-slate-500">主代理访问密钥（X-Proxy-Token，仅此设备）</label>
+                <input
+                    type="password"
+                    value={proxyAccessTokenInput}
+                    onChange={(e) => setProxyAccessTokenInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="粘贴 Cloudflare PROXY_SERVER_TOKEN Secret"
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                />
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button onClick={() => { setProxyWorkerAccessToken(''); setProxyAccessTokenInput(''); addToast('已清除主代理本机密钥', 'info'); }} className="py-2 bg-slate-100 rounded-xl text-[11px] font-bold text-slate-500">清除密钥</button>
+                    <button onClick={handleSaveProxyWorkerToken} className="py-2 bg-slate-700 rounded-xl text-[11px] font-bold text-white">保存密钥</button>
+                </div>
+                <p className="text-[10px] text-amber-800 px-1 mt-2 leading-relaxed">密钥存于当前浏览器本地存储，不会进入 GitHub、云端 tool_config、网址或分析事件；它不具备 HttpOnly 防护，若网页脚本被入侵仍可能被读取。换 Worker 地址会自动清除旧密钥。</p>
 
                 <p className="text-[10px] text-slate-400 px-1 mt-2 leading-relaxed">
                     只填到域名（如 <b>{DEFAULT_PROXY_WORKER}</b>），不要带 /search、/webdav、/api 等路径。
