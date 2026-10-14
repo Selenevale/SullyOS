@@ -463,6 +463,9 @@ const markToolConfigPrivacySync = (config: { workerUrl?: string; userId?: string
 /** 待上传的那份配置。undefined 也是合法载荷（= 什么都没配），所以另用 flag 表示「欠着」。 */
 let pendingToolConfig: RealtimeConfig | undefined;
 let hasPendingToolConfig = false;
+// Compare generations, not object identity: MCP server settings can change
+// while the same RealtimeConfig object is reused by the caller.
+let toolConfigGeneration = 0;
 let toolConfigSyncing = false;
 let toolConfigRetryCount = 0;
 let toolConfigRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -484,6 +487,7 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
   toolConfigSyncing = true;
   // 记下这次传的是哪一份：上传期间用户又改了配置的话，清账不能把新的那份一起清掉。
   const snapshot = pendingToolConfig;
+  const generation = toolConfigGeneration;
   try {
     const globalConfig = await ActiveMsgStore.getGlobalConfig();
     if (!globalConfig.workerUrl?.trim()) {
@@ -494,7 +498,7 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
       return;
     }
     await ActiveMsgClient.syncToolConfig(snapshot);
-    if (pendingToolConfig === snapshot) {
+    if (toolConfigGeneration === generation) {
       // Only an acknowledged, non-rejected cloud write clears the migration
       // marker. A failed or skipped write leaves the retry debt intact.
       markToolConfigPrivacySync(globalConfig);
@@ -504,6 +508,9 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
     }
     toolConfigRetryCount = 0;
   } catch (error) {
+    // Superseded requests must not delay the new, more restrictive config.
+    // The finally block will immediately send the latest generation.
+    if (toolConfigGeneration !== generation) return;
     if (toolConfigRetryCount < MAX_RETRIES) {
       const delay = RETRY_BASE_MS * 2 ** toolConfigRetryCount;
       toolConfigRetryCount += 1;
@@ -517,6 +524,10 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
     }
   } finally {
     toolConfigSyncing = false;
+    if (hasPendingToolConfig && toolConfigGeneration !== generation) {
+      if (toolConfigRetryTimer != null) { clearTimeout(toolConfigRetryTimer); toolConfigRetryTimer = null; }
+      void runToolConfigSync('superseded');
+    }
   }
 };
 
@@ -526,6 +537,7 @@ const runToolConfigSync = async (reason: string): Promise<void> => {
  */
 export const syncAmsgToolConfig = (realtimeConfig: RealtimeConfig | undefined): void => {
   pendingToolConfig = realtimeConfig;
+  toolConfigGeneration += 1;
   hasPendingToolConfig = true;
   toolConfigRetryCount = 0;
   if (toolConfigRetryTimer != null) { clearTimeout(toolConfigRetryTimer); toolConfigRetryTimer = null; }
