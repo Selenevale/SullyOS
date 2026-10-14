@@ -5,8 +5,9 @@ import worker from './index.js';
 const SECRET = 'proxy-fixture-token-only-never-use-in-production-0123456789';
 const ORIGIN = 'https://private.pages.dev';
 const env = { PROXY_ALLOWED_ORIGINS: ORIGIN, PROXY_SERVER_TOKEN: SECRET };
-const call = (path: string, headers: Record<string, string> = {}, config: Record<string, string> = env) =>
+const call = (path: string, headers: Record<string, string> = {}, config: Record<string, string> = env, method = 'GET') =>
   worker.fetch(new Request('https://proxy.example.invalid' + path, {
+    method,
     headers: { 'X-Brave-API-Key': 'brave-fixture', ...headers },
   }), config, { waitUntil() {} });
 
@@ -67,7 +68,7 @@ describe('private main proxy bearer gate (Origin is not authentication)', () => 
     vi.stubGlobal('fetch', outgoing);
     const res = await call('/github?url=' + encodeURIComponent('https://api.github.com/repos/a/b'), {
       Origin: ORIGIN, 'X-Proxy-Token': SECRET, Authorization: 'Bearer github-only-test',
-    });
+    }, env, 'POST');
     expect(res.status).toBe(502);
     expect(res.headers.has('Location')).toBe(false);
     expect(outgoing).toHaveBeenCalledTimes(1);
