@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+// @ts-expect-error standalone Worker entry is JS, not a typed module
 import proxyWorker from './index.js';
 
 const proxy = proxyWorker as {
@@ -91,7 +92,7 @@ describe('private proxy external destination boundaries', () => {
   });
 
   it('only uses Jina Reader after explicit opt-in', async () => {
-    const outbound = vi.fn(async () => new Response(JSON.stringify({ data: { content: 'Article text' } }), {
+    const outbound = vi.fn(async (_url: string) => new Response(JSON.stringify({ data: { content: 'Article text' } }), {
       headers: { 'Content-Type': 'application/json' },
     }));
     vi.stubGlobal('fetch', outbound);
