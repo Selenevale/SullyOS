@@ -862,6 +862,17 @@ describe('ActiveMsgClient.syncToolConfig privacy acknowledgement', () => {
   beforeEach(() => {
     reiClient.init.mockReset().mockResolvedValue(undefined);
     reiClient.putClientState.mockReset().mockResolvedValue({ success: true, data: {} });
+    // Simulate a cloud read-back of the value that actually reached D1.
+    // It matters that the test exercises a second request, not merely an HTTP
+    // success flag on putClientState.
+    reiClient.getClientState.mockReset().mockImplementation(async () => ({
+      success: true,
+      data: {
+        entries: reiClient.putClientState.mock.calls.at(-1)?.[0]?.map((row: any) => ({
+          key: row.key, value: row.value,
+        })) ?? [],
+      },
+    }));
   });
 
   it('normal sync uploads a newly sanitized tool config', async () => {
@@ -872,6 +883,39 @@ describe('ActiveMsgClient.syncToolConfig privacy acknowledgement', () => {
     const [entry] = reiClient.putClientState.mock.calls[0][0];
     expect(entry).toMatchObject({ namespace: 'amsg:global', key: 'tool_config' });
     expect(JSON.stringify(entry.value)).not.toContain('stale-key-never-upload');
+    expect(reiClient.getClientState).toHaveBeenCalledWith('amsg:global');
+  });
+
+  it('a stale cloud row does not count as cleaned up, even if the write claimed success', async () => {
+    reiClient.getClientState.mockResolvedValue({
+      success: true,
+      data: { entries: [{ key: 'tool_config', value: JSON.stringify({
+        v: 1, proxyWorkerUrl: 'https://proxy.invalid', notionEnabled: false,
+        notionApiKey: 'old-notion-api-key',
+      }) }] },
+    });
+    await expect(ActiveMsgClient.syncToolConfig({
+      notionEnabled: false, notionApiKey: 'must-not-go-up',
+    } as any)).rejects.toThrow(/尚未确认旧凭据被覆盖/);
+    expect(reiClient.putClientState).toHaveBeenCalledTimes(1);
+  });
+
+  it('a missing or failed cloud read-back leaves credential cleanup unconfirmed', async () => {
+    reiClient.getClientState.mockResolvedValueOnce({ success: true, data: { entries: [] } });
+    await expect(ActiveMsgClient.syncToolConfig(undefined)).rejects.toThrow(/尚未确认旧凭据被覆盖/);
+    reiClient.getClientState.mockResolvedValueOnce({ success: false });
+    await expect(ActiveMsgClient.syncToolConfig(undefined)).rejects.toThrow(/无法读取云端工具配置/);
+  });
+
+  it('normal read-back must never accept two different rows under the same tool_config key', async () => {
+    reiClient.getClientState.mockResolvedValue({
+      success: true,
+      data: { entries: [
+        { key: 'tool_config', value: '{}' },
+        { key: 'tool_config', value: '{}' },
+      ] },
+    });
+    await expect(ActiveMsgClient.syncToolConfig(undefined)).rejects.toThrow(/尚未确认旧凭据被覆盖/);
   });
 
   it('success with rejected entries is still a failed credential replacement', async () => {
