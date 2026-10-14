@@ -187,6 +187,9 @@ const createWorld = async (startClock: string) => {
     VAPID_PUBLIC_KEY: vapid.publicKey,
     VAPID_PRIVATE_KEY: vapid.privateKey,
     AMSG_SERVER_TOKEN: SERVER_TOKEN,
+    // Browser-facing deployment requires an explicit origin even when these
+    // simulation requests have no Origin header (non-browser SDK client).
+    AMSG_ALLOWED_ORIGIN: 'https://private.pages.dev',
     DB: d1,
     INSTANT_TICK: {
       idFromName: (name: string) => name,
