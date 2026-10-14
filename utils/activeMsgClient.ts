@@ -3181,7 +3181,7 @@ export const ActiveMsgClient = {
       if (!readBack?.success) {
         throw new Error('无法读取云端工具配置确认清理结果；旧凭据可能仍在云端，请稍后重试。');
       }
-      const matching = (readBack.data?.entries ?? [])
+      const matching = ((readBack.data?.entries ?? []) as Array<{ key: string; value: string }>)
         .filter((entry) => entry?.key === AMSG_TOOL_CONFIG_KEY);
       if (matching.length !== 1 || matching[0]?.value !== intended.value) {
         throw new Error('云端工具配置与本机最新设置不一致；尚未确认旧凭据被覆盖，请稍后重试。');
