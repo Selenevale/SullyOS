@@ -451,7 +451,7 @@ export const AMSG2_PENDING_TOOL_CONFIG_LS_KEY = 'amsg2_pending_tool_config';
 export const AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY = 'amsg2_tool_config_privacy_v2';
 
 const toolConfigSyncOwner = (config: { workerUrl?: string; userId?: string }): string =>
-  JSON.stringify([config.workerUrl?.trim().replace(/\\/+$/, '') || '', config.userId || '']);
+  JSON.stringify([config.workerUrl?.trim().replace(/\/+$/, '') || '', config.userId || '']);
 const readToolConfigPrivacySyncMark = (): string | null => {
   try { return localStorage.getItem(AMSG2_TOOL_CONFIG_PRIVACY_SYNC_LS_KEY); } catch { return null; }
 };
