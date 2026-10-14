@@ -8,6 +8,10 @@ import {
   requestProxyWorkerSettingsFocus,
   consumeProxyWorkerSettingsFocus,
   setProxyWorkerUrlOverride,
+  getProxyWorkerAccessToken,
+  setProxyWorkerAccessToken,
+  setProxyWorkerRuntimeAuth,
+  proxyWorkerAuthHeadersFor,
 } from './proxyWorker';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
@@ -135,5 +139,65 @@ describe('rewriteStaleWorkerUrl', () => {
     expect(rewriteStaleWorkerUrl(DEFAULT_PROXY_WORKER)).toBe(DEFAULT_PROXY_WORKER);
     expect(rewriteStaleWorkerUrl('https://my-own.example.com/api')).toBe('https://my-own.example.com/api');
     expect(rewriteStaleWorkerUrl('')).toBe('');
+  });
+});
+
+describe('private proxy access-token origin isolation', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setProxyWorkerUrlOverride(null);
+    setProxyWorkerRuntimeAuth(null, null);
+  });
+  afterEach(() => {
+    setProxyWorkerRuntimeAuth(null, null);
+    setProxyWorkerUrlOverride(null);
+  });
+
+  it('only adds the browser token for the exact chosen private Worker origin', () => {
+    setProxyWorkerUrl('https://my-proxy.example.com');
+    setProxyWorkerAccessToken('  local-private-token  ');
+    expect(getProxyWorkerAccessToken()).toBe('local-private-token');
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search?q=hi'))
+      .toEqual({ 'X-Proxy-Token': 'local-private-token' });
+    expect(proxyWorkerAuthHeadersFor('https://other.example.com/search')).toEqual({});
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com.evil.test/search')).toEqual({});
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com@evil.test/search')).toEqual({});
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com:8443/search')).toEqual({});
+  });
+
+  it('never attaches a token to the default invalid Worker, a legacy proxy, or a non-local HTTP endpoint', () => {
+    setProxyWorkerAccessToken('local-private-token');
+    expect(proxyWorkerAuthHeadersFor('https://proxy.invalid/search')).toEqual({});
+    setProxyWorkerUrl('https://proxy.friedsully.com');
+    expect(proxyWorkerAuthHeadersFor('https://proxy.friedsully.com/search')).toEqual({});
+    setProxyWorkerUrl('http://remote.example.com');
+    setProxyWorkerAccessToken('bad-http-token');
+    expect(proxyWorkerAuthHeadersFor('http://remote.example.com/search')).toEqual({});
+  });
+
+  it('a Worker address change or reset invalidates the old locally stored bearer', () => {
+    setProxyWorkerUrl('https://worker-a.example.com');
+    setProxyWorkerAccessToken('worker-a-token');
+    setProxyWorkerUrl('https://worker-b.example.com');
+    expect(getProxyWorkerAccessToken()).toBe('');
+    setProxyWorkerAccessToken('worker-b-token');
+    setProxyWorkerUrl('');
+    expect(getProxyWorkerAccessToken()).toBe('');
+  });
+
+  it('AMSG runtime override takes precedence, and refuses to use a mismatched or missing secret', () => {
+    setProxyWorkerUrl('https://my-proxy.example.com');
+    setProxyWorkerAccessToken('browser-token');
+    setProxyWorkerRuntimeAuth('https://wrong-proxy.example.com', 'cloud-secret');
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search')).toEqual({});
+    setProxyWorkerRuntimeAuth('https://my-proxy.example.com', 'cloud-secret');
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search'))
+      .toEqual({ 'X-Proxy-Token': 'cloud-secret' });
+    expect(proxyWorkerAuthHeadersFor('https://api.search.brave.com/search')).toEqual({});
+    setProxyWorkerRuntimeAuth('https://my-proxy.example.com', '');
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search')).toEqual({});
+    setProxyWorkerRuntimeAuth(null, null);
+    expect(proxyWorkerAuthHeadersFor('https://my-proxy.example.com/search'))
+      .toEqual({ 'X-Proxy-Token': 'browser-token' });
   });
 });
