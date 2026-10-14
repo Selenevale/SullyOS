@@ -96,7 +96,9 @@ describe('getPeriodIntervals 日历区间', () => {
 describe('isMedPlanDueToday 药盒频率', () => {
     const mkPlan = (overrides?: Partial<MedPlan>): MedPlan => ({
         id: 'p1', name: '维D', time: '08:00', enabled: true,
-        createdAt: new Date('2026-07-01T00:00:00Z').getTime(), ...overrides,
+        // The feature uses the user's local calendar date. Midnight UTC is
+        // June 30 in many time zones, so use local July 1 at noon instead.
+        createdAt: new Date(2026, 6, 1, 12, 0, 0).getTime(), ...overrides,
     });
 
     it('默认（无频率字段）= 长期每天，与旧数据兼容', () => {
