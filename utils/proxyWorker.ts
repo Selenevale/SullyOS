@@ -50,6 +50,9 @@ let runtimeOverrideUrl: string | null = null;
 export const setProxyWorkerUrlOverride = (url: string | null): void => {
   const trimmed = normalize(url || '');
   runtimeOverrideUrl = /^https?:\/\//i.test(trimmed) ? (isLegacyProxyWorkerUrl(trimmed) ? DEFAULT_PROXY_WORKER : trimmed) : null;
+  // In an AMSG Worker, the URL from cloud tool_config must not redirect
+  // third-party tool keys (or the server bearer) to an attacker-controlled host.
+  if (runtimeProxyAuth && runtimeOverrideUrl !== runtimeProxyAuth.origin) runtimeOverrideUrl = DEFAULT_PROXY_WORKER;
 };
 
 /**
@@ -57,7 +60,10 @@ export const setProxyWorkerUrlOverride = (url: string | null): void => {
  * 用户在设置里改完、新发起的请求立刻生效，无需刷新页面。
  */
 export const getProxyWorkerUrl = (): string => {
-  if (runtimeOverrideUrl) return runtimeOverrideUrl;
+  if (runtimeOverrideUrl) {
+    return runtimeProxyAuth && runtimeOverrideUrl !== runtimeProxyAuth.origin
+      ? DEFAULT_PROXY_WORKER : runtimeOverrideUrl;
+  }
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return DEFAULT_PROXY_WORKER;
