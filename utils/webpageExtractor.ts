@@ -14,7 +14,7 @@
 //  4. 前端直连抓裸 HTML + DOMParser 启发式提取（多数站点会被 CORS 挡掉，纯末路兜底）。
 
 import { htmlToText } from './htmlPrompt';
-import { getProxyWorkerUrl } from './proxyWorker';
+import { getProxyWorkerUrl, proxyWorkerAuthHeadersFor } from './proxyWorker';
 import { getVideoParseKey } from './videoParser';
 import { getFirecrawlApiKey, scrapeWebpageWithFirecrawl } from './firecrawl';
 
@@ -219,7 +219,7 @@ export function extractXhsNoteId(text: string): string | null {
 export async function expandShortUrl(url: string): Promise<string> {
   const res = await fetch(`${sfworkerUrl()}/expand-url`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...proxyWorkerAuthHeadersFor(sfworkerUrl()) },
     body: JSON.stringify({ url }),
     // 小红书短链在部分网络/代理组合下会一直挂起。及时失败，交给聊天页给出
     // 可操作的网络提示，避免用户看到“发送后什么都没发生”。
@@ -248,7 +248,7 @@ type WorkerFetchResult =
 async function fetchViaWorker(url: string): Promise<WorkerFetchResult> {
   const res = await fetch(`${sfworkerUrl()}/fetch-webpage`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...proxyWorkerAuthHeadersFor(sfworkerUrl()) },
     body: JSON.stringify({ url }),
   });
   const text = await res.text().catch(() => '');
