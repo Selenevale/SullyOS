@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error standalone Worker entry is JS, not a typed module
 import proxyWorker from './index.js';
 
 const worker = proxyWorker as {
