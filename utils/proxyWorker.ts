@@ -24,6 +24,7 @@ export const DEFAULT_PROXY_WORKER = 'https://proxy.invalid';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
 const SETTINGS_FOCUS_SESSION_KEY = 'sully_settings_focus_proxy_worker_v1';
+const PROXY_AUTH_STORAGE_KEY = 'sully_proxy_worker_access_token_v1';
 
 // 当前及历史作者公共代理地址都不允许作为私有部署的隐式默认值。
 // 老用户 localStorage 如仍存有这些域名，读取时退回 .invalid 安全占位地址。
@@ -78,12 +79,17 @@ export const setProxyWorkerUrl = (url: string): void => {
   try {
     const trimmed = normalize(url || '');
     if (!trimmed || trimmed === DEFAULT_PROXY_WORKER) {
+      const before = getProxyWorkerUrl();
       localStorage.removeItem(LS_KEY);
+      if (before !== getProxyWorkerUrl()) localStorage.removeItem(PROXY_AUTH_STORAGE_KEY);
       notifyProxyWorkerChanged();
       return;
     }
     if (!/^https?:\/\//i.test(trimmed)) return;
+    const before = getProxyWorkerUrl();
     localStorage.setItem(LS_KEY, trimmed);
+    // A bearer is tied to the original Worker; never send it to a new URL.
+    if (before !== getProxyWorkerUrl()) localStorage.removeItem(PROXY_AUTH_STORAGE_KEY);
     notifyProxyWorkerChanged();
   } catch {
     /* localStorage 不可用就当默认处理 */
@@ -106,6 +112,68 @@ const notifyProxyWorkerChanged = (): void => {
 };
 
 /** 当前是否在用自定义（非默认）worker。用于设置页提示文案。 */
+
+// Dedicated bearer for the user's own network proxy. Keep it out of build
+// variables, cloud tool_config, URLs and logs. Browser storage is local to
+// this origin, NOT an HttpOnly vault: any script running here can read it.
+export const PROXY_ACCESS_TOKEN_LS_KEY = PROXY_AUTH_STORAGE_KEY;
+
+/** An authenticated proxy must be a bare HTTPS origin (localhost HTTP is dev-only). */
+const proxyAuthOrigin = (raw: string): string | null => {
+  try {
+    const cleaned = normalize(raw);
+    const parsed = new URL(cleaned);
+    const localDev = parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+    if (parsed.protocol !== 'https:' && !localDev) return null;
+    if (parsed.origin !== cleaned || isLegacyProxyWorkerUrl(cleaned)
+      || parsed.hostname === 'proxy.invalid' || parsed.username || parsed.password) return null;
+    return parsed.origin;
+  } catch { return null; }
+};
+
+/** The frontend can save a bearer only locally; it never enters realtimeConfig. */
+export const getProxyWorkerAccessToken = (): string => {
+  try { return localStorage.getItem(PROXY_ACCESS_TOKEN_LS_KEY)?.trim() || ''; }
+  catch { return ''; }
+};
+export const setProxyWorkerAccessToken = (token: string): void => {
+  try {
+    const trimmed = token.trim();
+    if (trimmed) localStorage.setItem(PROXY_ACCESS_TOKEN_LS_KEY, trimmed);
+    else localStorage.removeItem(PROXY_ACCESS_TOKEN_LS_KEY);
+  } catch { /* private mode may reject localStorage */ }
+};
+
+// Non-browser AMSG fire-time tools cannot read the browser's localStorage.
+// This runtime-only binding will eventually be configured from Cloudflare
+// Worker Secrets, never from client_state/tool_config. An invalid binding
+// deliberately prevents falling back to a browser credential.
+let runtimeProxyAuth: { origin: string | null; token: string } | null = null;
+export const setProxyWorkerRuntimeAuth = (origin: string | null, token: string | null): void => {
+  runtimeProxyAuth = origin === null && token === null
+    ? null
+    : { origin: proxyAuthOrigin(origin || ''), token: token?.trim() || '' };
+};
+
+/**
+ * Attach X-Proxy-Token ONLY to the exact configured private proxy origin.
+ * Never spread these headers into a generic URL, redirect or third-party MCP.
+ */
+export const proxyWorkerAuthHeadersFor = (targetUrl: string): Record<string, string> => {
+  const configuredOrigin = proxyAuthOrigin(getProxyWorkerUrl());
+  if (!configuredOrigin) return {};
+  try {
+    const target = new URL(targetUrl);
+    if (target.origin !== configuredOrigin || target.username || target.password) return {};
+  } catch { return {}; }
+  if (runtimeProxyAuth) {
+    return runtimeProxyAuth.origin === configuredOrigin && runtimeProxyAuth.token
+      ? { 'X-Proxy-Token': runtimeProxyAuth.token } : {};
+  }
+  const browserToken = getProxyWorkerAccessToken();
+  return browserToken ? { 'X-Proxy-Token': browserToken } : {};
+};
+
 export const isCustomProxyWorker = (): boolean => getProxyWorkerUrl() !== DEFAULT_PROXY_WORKER;
 
 /** 从公告等入口打开设置时，请设置页自动展开并定位到网络代理。 */
